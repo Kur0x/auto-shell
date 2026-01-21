@@ -207,6 +207,180 @@ class AutoShellAgent:
 
         console.print("\n[bold green]All tasks completed successfully![/bold green]")
 
+    def run_adaptive(self, user_query: str):
+        """
+        自适应执行模式：渐进式生成和执行步骤，根据输出动态调整
+        """
+        console.print(Panel.fit(
+            "[bold blue]自适应执行模式[/bold blue]\n"
+            "AI 将根据执行结果动态生成下一步操作",
+            title="Adaptive Mode",
+            border_style="blue"
+        ))
+        
+        # 初始化
+        execution_history = []
+        max_iterations = 50  # 防止无限循环
+        iteration = 0
+        is_complete = False
+        
+        # 获取上下文
+        context_str = ContextManager.get_context_string()
+        if self.ssh_config:
+            session_cwd = None
+        else:
+            session_cwd = os.getcwd()
+        context_str += f"\n- Virtual Session CWD: {session_cwd}"
+        
+        console.print(f"[bold cyan]目标:[/bold cyan] {user_query}\n")
+        
+        # 执行循环
+        while not is_complete and iteration < max_iterations:
+            iteration += 1
+            console.print(f"\n[bold magenta]═══ 迭代 {iteration} ═══[/bold magenta]")
+            
+            # 生成下一步
+            try:
+                with console.status("[bold green]AI 正在思考下一步...[/bold green]", spinner="dots"):
+                    next_plan = self.llm.generate_next_steps(
+                        user_goal=user_query,
+                        context_str=context_str,
+                        execution_history=execution_history,
+                        max_steps=3
+                    )
+            except Exception as e:
+                console.print(f"[bold red]生成步骤失败:[/bold red] {str(e)}")
+                break
+            
+            thought = next_plan.get("thought", "")
+            steps = next_plan.get("steps", [])
+            is_complete = next_plan.get("is_complete", False)
+            
+            if not steps:
+                console.print("[yellow]没有更多步骤，任务可能已完成[/yellow]")
+                break
+            
+            # 显示思考过程
+            if thought:
+                console.print(Panel(f"[italic]{thought}[/italic]", title="AI 思考", border_style="blue"))
+            
+            # 显示计划
+            self._print_plan_table(steps)
+            
+            # 执行步骤
+            for i, step in enumerate(steps):
+                description = step.get("description", "No description")
+                command = step.get("command", "")
+                
+                console.print(f"\n[bold cyan]步骤 {i+1}/{len(steps)}:[/bold cyan] {description}")
+                console.print(f"[dim]命令: {command}[/dim]")
+                console.print(f"[dim]工作目录: {session_cwd}[/dim]")
+                
+                # 检查是否是 CD 命令
+                use_posix = os.name != 'nt'
+                try:
+                    tokens = shlex.split(command, posix=use_posix)
+                except ValueError:
+                    tokens = command.split()
+                
+                if tokens and tokens[0] == "cd":
+                    # 处理 CD 命令
+                    if self.ssh_config:
+                        target_dir = tokens[1] if len(tokens) > 1 else "~"
+                        if session_cwd and target_dir.startswith('/'):
+                            session_cwd = target_dir
+                        elif session_cwd:
+                            session_cwd = f"{session_cwd}/{target_dir}" if session_cwd != "~" else target_dir
+                        else:
+                            session_cwd = target_dir
+                        console.print(f"[green]✓ 切换目录到: {session_cwd}[/green]")
+                        
+                        # 记录到历史
+                        execution_history.append({
+                            "description": description,
+                            "command": command,
+                            "output": f"Changed directory to {session_cwd}",
+                            "success": True
+                        })
+                        continue
+                    else:
+                        target_dir = tokens[1] if len(tokens) > 1 else "~"
+                        if target_dir == "~":
+                            target_dir = os.path.expanduser("~")
+                        new_cwd = os.path.abspath(os.path.join(session_cwd or os.getcwd(), target_dir))
+                        
+                        if os.path.isdir(new_cwd):
+                            session_cwd = new_cwd
+                            console.print(f"[green]✓ 切换目录到: {session_cwd}[/green]")
+                            execution_history.append({
+                                "description": description,
+                                "command": command,
+                                "output": f"Changed directory to {session_cwd}",
+                                "success": True
+                            })
+                            continue
+                        else:
+                            console.print(f"[red]目录不存在: {new_cwd}[/red]")
+                            execution_history.append({
+                                "description": description,
+                                "command": command,
+                                "output": f"Directory not found: {new_cwd}",
+                                "success": False
+                            })
+                            break
+                
+                # 执行普通命令
+                result = CommandExecutor.execute(
+                    command,
+                    cwd=session_cwd,
+                    description=description,
+                    ssh_config=self.ssh_config
+                )
+                
+                if not result["executed"]:
+                    console.print("[yellow]用户取消执行[/yellow]")
+                    return
+                
+                # 记录到历史
+                step_record = {
+                    "description": description,
+                    "command": command,
+                    "output": result["stdout"] if result["return_code"] == 0 else result["stderr"],
+                    "success": result["return_code"] == 0
+                }
+                execution_history.append(step_record)
+                
+                # 显示结果
+                if result["return_code"] == 0:
+                    console.print(f"[green]✓ 成功[/green]")
+                    if result["stdout"].strip():
+                        # 限制输出长度
+                        output_preview = result["stdout"][:500]
+                        if len(result["stdout"]) > 500:
+                            output_preview += "\n... (输出已截断)"
+                        console.print(Panel(output_preview, title="输出", border_style="green", expand=False))
+                else:
+                    console.print(f"[red]✗ 失败[/red]")
+                    error_msg = result["stderr"] or result["stdout"]
+                    console.print(Panel(error_msg, title="错误", border_style="red", expand=False))
+                    # 失败后继续，让 AI 根据错误调整
+                    break
+        
+        # 任务完成
+        if is_complete:
+            console.print("\n[bold green]✓ 任务完成！[/bold green]")
+        elif iteration >= max_iterations:
+            console.print("\n[yellow]达到最大迭代次数，任务可能未完成[/yellow]")
+        else:
+            console.print("\n[yellow]任务执行中断[/yellow]")
+        
+        # 显示执行摘要
+        console.print(f"\n[bold]执行摘要:[/bold]")
+        console.print(f"总迭代次数: {iteration}")
+        console.print(f"总步骤数: {len(execution_history)}")
+        console.print(f"成功步骤: {sum(1 for s in execution_history if s['success'])}")
+        console.print(f"失败步骤: {sum(1 for s in execution_history if not s['success'])}")
+
     def _print_plan_table(self, steps):
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("#", style="dim", width=4)

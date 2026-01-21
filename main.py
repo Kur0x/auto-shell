@@ -26,11 +26,17 @@ Examples:
   # 一次性执行（本地）
   python main.py -c "列出当前目录下的所有文件"
   
+  # 自适应执行模式（根据输出动态调整）
+  python main.py --adaptive -c "执行test.sh，如果输出为1则修改为2"
+  
   # SSH模式（交互）
   python main.py --ssh-host user@example.com --ssh-port 22
   
   # SSH模式（一次性执行）
   python main.py --ssh-host user@example.com -c "检查磁盘使用情况"
+  
+  # SSH + 自适应模式
+  python main.py --ssh-host user@example.com --adaptive -c "检查日志并提取错误"
   
   # SSH模式（使用密钥）
   python main.py --ssh-host user@example.com --ssh-key ~/.ssh/id_rsa -c "重启nginx"
@@ -68,6 +74,12 @@ Examples:
         '--ssh-key',
         type=str,
         help='SSH私钥文件路径'
+    )
+    
+    parser.add_argument(
+        '--adaptive',
+        action='store_true',
+        help='启用自适应执行模式（根据输出动态生成下一步）'
     )
     
     return parser.parse_args()
@@ -110,7 +122,10 @@ def main():
 
         # 一次性执行模式
         if args.command:
-            agent.run(args.command)
+            if args.adaptive:
+                agent.run_adaptive(args.command)
+            else:
+                agent.run(args.command)
             return
         
         # 交互模式
@@ -124,8 +139,12 @@ def main():
                 if user_input.lower() in ["exit", "quit"]:
                     console.print("[bold green]Goodbye![/bold green]")
                     break
-                    
-                agent.run(user_input)
+                
+                # 检查是否使用自适应模式
+                if args.adaptive:
+                    agent.run_adaptive(user_input)
+                else:
+                    agent.run(user_input)
                 console.print() # 空行分隔
                 
             except KeyboardInterrupt:

@@ -295,3 +295,185 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
             import traceback
             console.print(f"[dim][DEBUG] Traceback:\n{traceback.format_exc()}[/dim]")
             raise RuntimeError(f"LLM API Error: {str(e)}")
+    
+    def generate_next_steps(
+        self,
+        user_goal: str,
+        context_str: str,
+        execution_history: list,
+        max_steps: int = 3
+    ) -> dict:
+        """
+        根据当前状态生成接下来的步骤（渐进式执行）
+        
+        :param user_goal: 用户的总体目标
+        :param context_str: 系统环境信息
+        :param execution_history: 已执行的步骤历史 [{"description": ..., "command": ..., "output": ..., "success": ...}, ...]
+        :param max_steps: 最多生成几个步骤
+        :return: {"thought": ..., "steps": [...], "is_complete": bool}
+        """
+        
+        console.print(f"[dim][DEBUG] Generating next steps (max: {max_steps})...[/dim]")
+        start_time = time.time()
+        
+        # 构建执行历史摘要
+        history_summary = self._build_history_summary(execution_history)
+        
+        system_prompt = f"""
+You are an expert system engineer with the ability to break down complex tasks into steps and adapt based on execution results.
+
+Current Execution Environment:
+{context_str}
+
+⚠️ CRITICAL JSON FORMAT REQUIREMENTS ⚠️
+
+YOU MUST RESPOND WITH **ONLY** A VALID JSON OBJECT IN THIS **EXACT** FORMAT:
+
+{{
+   "thought": "Your reasoning about what to do next",
+   "steps": [
+      {{
+         "description": "Step description",
+         "command": "shell command"
+      }}
+   ],
+   "is_complete": false
+}}
+
+IMPORTANT RULES:
+1. Generate 1-{max_steps} steps based on the current situation
+2. Consider the execution history and previous outputs
+3. Use shell commands for ALL operations (cat, sed, grep, awk, etc.)
+4. Set "is_complete": true ONLY when the entire goal is achieved
+5. Each step should be atomic and clear
+6. Use command substitution and pipes when needed
+
+EXAMPLES OF GOOD COMMANDS:
+- Read file: cat ~/test/a.sh
+- Check output: if [ "$(cat file.txt)" = "1" ]; then echo "match"; fi
+- Edit file: sed -i 's/echo 1/echo 2/g' ~/test/a.sh
+- Conditional: [ "$(command)" = "expected" ] && next_command || alternative_command
+
+Remember: Output ONLY the JSON object - absolutely nothing else!
+"""
+
+        user_message = f"""User Goal: {user_goal}
+
+{history_summary}
+
+Based on the execution history above, generate the next 1-{max_steps} steps to achieve the goal.
+
+IMPORTANT: You MUST respond with ONLY a JSON object in this exact format:
+{{
+   "thought": "your reasoning here",
+   "steps": [
+      {{"description": "step description", "command": "shell command"}}
+   ],
+   "is_complete": false
+}}
+
+Do NOT include any other text, explanations, or markdown. ONLY the JSON object."""
+
+        raw_content = None
+        
+        try:
+            console.print(f"[dim][DEBUG] Calling LLM API for next steps...[/dim]")
+            
+            api_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                "temperature": 0.5  # 稍低的温度以获得更确定的输出
+            }
+            
+            # 尝试使用JSON模式
+            response = None
+            json_mode_failed = False
+            
+            try:
+                api_params["response_format"] = {"type": "json_object"}
+                response = self.client.chat.completions.create(**api_params)
+            except Exception as e:
+                error_msg = str(e)
+                if "response_format" in error_msg or "400" in error_msg:
+                    console.print(f"[dim][DEBUG] JSON mode not supported, retrying without it...[/dim]")
+                    json_mode_failed = True
+                else:
+                    raise
+            
+            if json_mode_failed:
+                api_params.pop("response_format", None)
+                response = self.client.chat.completions.create(**api_params)
+            
+            elapsed = time.time() - start_time
+            console.print(f"[dim][DEBUG] LLM API responded in {elapsed:.2f}s[/dim]")
+            
+            if response is None:
+                raise RuntimeError("API call succeeded but response is None")
+            
+            raw_content = response.choices[0].message.content
+            
+            if not raw_content:
+                raise ValueError("LLM returned empty response")
+            
+            cleaned_content = self._clean_json_response(raw_content)
+            result = json.loads(cleaned_content)
+            
+            # 验证格式
+            if not isinstance(result, dict):
+                raise ValueError(f"Expected dict, got {type(result)}")
+            
+            if "steps" not in result:
+                raise ValueError(f"Missing 'steps' field. Got keys: {list(result.keys())}")
+            
+            if not isinstance(result.get("steps"), list):
+                raise ValueError(f"'steps' must be a list, got {type(result.get('steps'))}")
+            
+            # 验证每个step
+            for i, step in enumerate(result["steps"]):
+                if not isinstance(step, dict):
+                    raise ValueError(f"Step {i+1} must be a dict, got {type(step)}")
+                if "command" not in step:
+                    raise ValueError(f"Step {i+1} missing 'command' field")
+            
+            # 确保 is_complete 字段存在
+            if "is_complete" not in result:
+                result["is_complete"] = False
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            console.print(f"[bold red][DEBUG] JSON Parse Error: {str(e)}[/bold red]")
+            console.print(f"[dim][DEBUG] Raw content: {raw_content or 'N/A'}[/dim]")
+            raise ValueError(f"LLM returned invalid JSON: {str(e)}")
+        except Exception as e:
+            elapsed = time.time() - start_time
+            console.print(f"[bold red][DEBUG] LLM API Error after {elapsed:.2f}s: {type(e).__name__}: {str(e)}[/bold red]")
+            import traceback
+            console.print(f"[dim][DEBUG] Traceback:\n{traceback.format_exc()}[/dim]")
+            raise RuntimeError(f"LLM API Error: {str(e)}")
+    
+    def _build_history_summary(self, execution_history: list) -> str:
+        """构建执行历史摘要"""
+        if not execution_history:
+            return "Execution History: None (this is the first step)"
+        
+        summary_parts = ["Execution History:"]
+        for i, step in enumerate(execution_history[-10:], 1):  # 只保留最近10步
+            status = "✓" if step.get("success") else "✗"
+            desc = step.get("description", "Unknown")
+            cmd = step.get("command", "")
+            output = step.get("output", "")
+            
+            # 限制输出长度
+            if output:
+                output_preview = output[:200] + "..." if len(output) > 200 else output
+                summary_parts.append(f"{i}. {status} {desc}")
+                summary_parts.append(f"   Command: {cmd}")
+                summary_parts.append(f"   Output: {output_preview}")
+            else:
+                summary_parts.append(f"{i}. {status} {desc} (Command: {cmd})")
+        
+        return "\n".join(summary_parts)
