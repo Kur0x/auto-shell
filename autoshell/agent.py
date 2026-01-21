@@ -45,15 +45,18 @@ class AutoShellAgent:
             console.print(f"[bold red]Planning Error:[/bold red] {str(e)}")
             return
 
-        thought = plan_data.get("thought", "")
+        thought = plan_data.get("thought", "No strategy provided")
         steps = plan_data.get("steps", [])
 
         if not steps:
             console.print("[bold red]Error:[/bold red] LLM returned an empty plan.")
             return
 
-        # 展示计划
-        console.print(Panel(f"[italic]{thought}[/italic]", title="Strategy", border_style="blue"))
+        # 展示计划（确保thought不为空）
+        if thought and thought.strip():
+            console.print(Panel(f"[italic]{thought}[/italic]", title="Strategy", border_style="blue"))
+        else:
+            console.print(Panel("[italic]Executing command...[/italic]", title="Strategy", border_style="blue"))
         self._print_plan_table(steps)
 
         # 2. Execute Steps
