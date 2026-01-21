@@ -23,43 +23,51 @@ class LLMClient:
             return match.group(1)
         return content
 
-    def generate_command(self, user_query: str, context_str: str, error_history: list = None) -> dict:
+    def generate_plan(self, user_query: str, context_str: str, error_history: list = None) -> dict:
         """
-        根据用户查询和环境上下文生成 Shell 命令。
+        根据用户查询和环境上下文生成 Shell 命令计划。
         
         :param user_query: 用户的自然语言指令
         :param context_str: 格式化后的系统环境信息
         :param error_history: 之前的错误历史，用于重试/自愈逻辑
-        :return: 解析后的 JSON 字典 {"thought": ..., "command": ...}
+        :return: 解析后的 JSON 字典 {"thought": ..., "steps": [{"description":..., "command":...}, ...]}
         """
         
         system_prompt = f"""
 You are an expert system engineer and command-line wizard.
-Your goal is to translate natural language instructions into precise, efficient, and safe Shell commands.
+Your goal is to translate natural language instructions into a SERIES of precise, efficient, and safe Shell commands.
 
 Current Execution Environment:
 {context_str}
 
 Protocol:
 1. Analyze the user's request based on the current OS and Shell.
-2. Formulate a SINGLE line shell command to accomplish the task.
-3. If the task is complex, chain commands using `&&` or `|` operators appropriate for the shell.
-4. Output MUST be a strictly valid JSON object with exactly two keys:
-   - "thought": A brief explanation of your reasoning (string).
-   - "command": The actual shell command to execute (string).
+2. Break down the task into sequential logical steps (Plan).
+3. For each step, formulate a valid shell command.
+4. Output MUST be a strictly valid JSON object with the following structure:
+   {{
+      "thought": "Brief explanation of the plan...",
+      "steps": [
+         {{
+            "description": "Step 1 description",
+            "command": "actual shell command"
+         }},
+         ...
+      ]
+   }}
 
 Constraints:
 - Do NOT output any text outside the JSON object.
-- Do NOT use markdown formatting (like ```json) unless absolutely necessary, but preferably just raw JSON.
-- The command must be valid for the detected Shell type.
+- Use explicit commands. For example, use 'cd target && ls' logic or separate 'cd target' as a step if the user implies state change. Note that 'cd' commands will be handled by the execution engine to maintain state across steps.
+- Ensure commands are valid for the detected Shell type.
 """
 
         user_message = f"User Request: {user_query}"
 
         if error_history:
-            # 如果有错误历史，将其附加到 Prompt 中，触发自愈逻辑
-            error_context = "\n".join([f"Attempt {i+1} Failed:\nCommand: {e['command']}\nError: {e['error']}" for i, e in enumerate(error_history)])
-            user_message += f"\n\nPREVIOUS ATTEMPTS FAILED. Please analyze the following errors and provide a FIXED command:\n{error_context}"
+            # error_history 结构: [{"step_index": int, "command": str, "error": str}, ...]
+            error_context = "\n".join([f"Previous failure at step {e.get('step_index', '?')}:\nCommand: {e['command']}\nError: {e['error']}" for e in error_history])
+            user_message += f"\n\nPREVIOUS EXECUTION FAILED. Please analyze the errors and provide a FIXED plan (you can adjust the remaining steps):\n{error_context}"
 
         try:
             response = self.client.chat.completions.create(
@@ -68,7 +76,7 @@ Constraints:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                temperature=0.2 # 低温度以保证确定性
+                temperature=0.2
             )
             
             raw_content = response.choices[0].message.content
@@ -77,7 +85,6 @@ Constraints:
             return json.loads(cleaned_content)
             
         except json.JSONDecodeError:
-            # 简单的重试或回退逻辑，这里暂且抛出异常，由上层处理或再次重试
             raise ValueError(f"LLM returned invalid JSON: {raw_content}")
         except Exception as e:
             raise RuntimeError(f"LLM API Error: {str(e)}")

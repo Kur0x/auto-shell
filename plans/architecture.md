@@ -32,35 +32,49 @@ AutoShell 是一个智能命令行工具，旨在将自然语言指令转换为�
   - CWD: {cwd}
   - User: {user}
 
-  Requirement: Convert user input to a SINGLE shell command.
-  Response Format: JSON {"thought": "reasoning", "command": "actual_command"}
+  Requirement: Convert user input to a SERIES of shell commands to accomplish the task.
+  Response Format: JSON 
+  {
+    "thought": "Analysis of the task...",
+    "steps": [
+       {"description": "Create project directory", "command": "mkdir my_project"},
+       {"description": "Navigate into directory", "command": "cd my_project"},
+       {"description": "Create file", "command": "touch app.py"}
+    ]
+  }
   ```
 - **方法**:
-  - `generate_command(user_query, context, error_history=None)`
+  - `generate_plan(user_query, context, error_history=None)`
 
 ### 2.4 执行引擎 (CommandExecutor)
 负责安全检查和命令执行。
-- **Whitelist**: `['ls', 'dir', 'pwd', 'echo', 'whoami', 'date', 'cd']` (注意: `cd` 需要特殊处理，因为它是 shell 内置命令，subprocess 无法持久化改变父进程目录，但可以在单次 session 中模拟或提示限制)
+- **Whitelist**: `['ls', 'dir', 'pwd', 'echo', 'whoami', 'date', 'cd', 'mkdir', 'touch', 'cat', 'type']` (扩展白名单以支持更多文件操作)
 - **方法**:
   - `is_safe(command)`: 检查白名单
-  - `execute(command, require_confirmation=True)`: 
+  - `execute(command, cwd=None)`: 
     - 如果 `is_safe` -> 直接运行
     - 否则 -> `rich` 高亮展示 -> 等待用户输入 `[Y/n]` -> 运行
-    - 返回: `(return_code, stdout, stderr)`
+    - 增加 `cwd` 参数，确保在正确的上下文中运行。
 
 ### 2.5 主控制流 (Agent)
-协调上述组件，实现 "自愈闭环"。
+协调上述组件，实现 "批量执行" 和 "状态管理"。
+- **State**: `session_cwd` (默认为启动目录)
 - **Loop**:
   1. 获取用户输入。
-  2. `ContextManager` 获取环境。
-  3. `LLMClient` 生成命令。
-  4. 解析 JSON。
-  5. `CommandExecutor` 执行。
-  6. **IF** 失败 (code != 0):
-     - 将 output/error 添加到历史。
-     - 只有当重试次数 < MAX 时，回到步骤 3 (附带错误信息)。
-     - **ELSE**: 报告最终失败。
-  7. **IF** 成功: 显示结果。
+  2. `LLMClient.generate_plan` 生成步骤列表。
+  3. 展示计划概览。
+  4. **For Each Step**:
+     - 检查如果是 `cd <path>`:
+       - 计算新路径。
+       - 验证路径存在。
+       - 更新 `session_cwd`。
+       - (可选) 打印切换目录信息。
+       - **Continue** (不调用 Executor)。
+     - 调用 `CommandExecutor.execute(command, cwd=session_cwd)`。
+     - **IF** 失败 (code != 0):
+       - 触发自愈逻辑 (针对当前步骤重试)。
+       - 如果自愈失败 -> **BREAK** (遇错即停)。
+  5. 报告最终结果。
 
 ## 3. 技术栈
 - Python 3.8+

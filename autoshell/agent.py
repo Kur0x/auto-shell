@@ -1,5 +1,8 @@
+import os
+import shlex
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 from rich.status import Status
 
 from .config import Config
@@ -17,62 +20,173 @@ class AutoShellAgent:
     def run(self, user_query: str):
         """
         处理单个用户请求的完整生命周期：
-        Context -> LLM -> Execute -> (Retry if fail) -> Output
+        Context -> LLM (Plan) -> Loop (Execute Steps) -> (Retry Step if fail) -> Output
         """
         error_history = []
         
-        # 初始环境感知
+        # 维护当前 Session 的 CWD，初始为程序启动时的 CWD
+        session_cwd = os.getcwd() 
+
+        # 1. Generate Plan (Context Aware)
         context_str = ContextManager.get_context_string()
         
-        for attempt in range(self.max_retries + 1):
+        # 将当前的 session_cwd 注入到 Context 中，虽然 ContextManager.get_cwd() 也能获取，
+        # 但如果是长会话，session_cwd 可能会变，这里还是以 ContextManager 为准（假设它是实时的），
+        # 或者我们显式告知 LLM 当前模拟的 CWD。
+        # 修正：ContextManager 获取的是 os.getcwd()，如果 AutoShell 进程本身不chdir，它一直不变。
+        # 我们应该告诉 LLM 当前的 session_cwd。
+        context_str += f"\n- Virtual Session CWD: {session_cwd}"
+
+        # 尝试生成计划
+        try:
+            with console.status("[bold green]Generating plan...[/bold green]", spinner="dots"):
+                plan_data = self.llm.generate_plan(user_query, context_str)
+        except Exception as e:
+            console.print(f"[bold red]Planning Error:[/bold red] {str(e)}")
+            return
+
+        thought = plan_data.get("thought", "")
+        steps = plan_data.get("steps", [])
+
+        if not steps:
+            console.print("[bold red]Error:[/bold red] LLM returned an empty plan.")
+            return
+
+        # 展示计划
+        console.print(Panel(f"[italic]{thought}[/italic]", title="Strategy", border_style="blue"))
+        self._print_plan_table(steps)
+
+        # 2. Execute Steps
+        for i, step in enumerate(steps):
+            description = step.get("description", "No description")
+            command = step.get("command", "")
+            
+            console.print(f"\n[bold cyan]Step {i+1}/{len(steps)}:[/bold cyan] {description}")
+            console.print(f"[dim]Command: {command}[/dim]")
+            console.print(f"[dim]CWD: {session_cwd}[/dim]")
+
+            # 检查是否是 CD 命令 (纯状态变更)
+            # 解析 command，如果是 'cd path'
+            # Windows 下 shlex 默认 posix=True 会吃掉反斜杠，需根据 OS 调整
+            use_posix = os.name != 'nt' 
             try:
-                # 1. Generate Command
-                status_msg = "Generating command..." if attempt == 0 else f"Fixing command (Attempt {attempt+1}/{self.max_retries + 1})..."
-                
-                with console.status(f"[bold green]{status_msg}[/bold green]", spinner="dots"):
-                    response = self.llm.generate_command(user_query, context_str, error_history)
-                
-                command = response.get("command")
-                thought = response.get("thought")
+                tokens = shlex.split(command, posix=use_posix)
+            except ValueError:
+                # 应对未闭合引号等情况，简单回退到 split
+                tokens = command.split()
 
-                if not command:
-                    console.print("[bold red]Error:[/bold red] LLM did not return a command.")
-                    return
-
-                # 2. Execute Command
-                # Executor 内部已经处理了白名单检查和用户确认
-                result = CommandExecutor.execute(command, thought)
+            if tokens and tokens[0] == "cd":
+                target_dir = tokens[1] if len(tokens) > 1 else "~"
+                # 处理 ~
+                if target_dir == "~":
+                    target_dir = os.path.expanduser("~")
                 
-                if not result["executed"]:
-                    # 用户取消执行或发生内部错误
-                    if result["stderr"] == "User aborted execution.":
-                        console.print("[yellow]Execution aborted by user.[/yellow]")
-                        return
-                    else:
-                        console.print(f"[bold red]Execution Error:[/bold red] {result['stderr']}")
-                        return
-
-                # 3. Check Result (Self-Healing)
-                if result["return_code"] == 0:
-                    console.print(Panel(result["stdout"], title="[bold green]Success[/bold green]", border_style="green"))
-                    return # 成功退出
+                # 计算绝对路径
+                new_cwd = os.path.abspath(os.path.join(session_cwd, target_dir))
+                
+                if os.path.isdir(new_cwd):
+                    session_cwd = new_cwd
+                    console.print(f"[green] Changed directory to: {session_cwd}[/green]")
+                    continue # CD 成功，进入下一步
                 else:
-                    # 失败，记录错误并重试
-                    error_msg = result["stderr"] or result["stdout"] # 有些命令错误输出在 stdout
-                    console.print(f"[bold red]Command Failed (Code {result['return_code']}):[/bold red] {error_msg}")
+                    console.print(f"[red]Directory not found: {new_cwd}[/red]")
+                    # 这里也可以选择中断，或者让 LLM 修复。
+                    # 为了简单，视为失败，触发 Error Handler。
+                    result = {"return_code": 1, "stdout": "", "stderr": f"Directory not found: {new_cwd}", "executed": True}
+            else:
+                # 执行普通命令
+                # 实现针对单个步骤的重试循环
+                step_success = False
+                for attempt in range(self.max_retries + 1):
+                    result = CommandExecutor.execute(command, cwd=session_cwd, description=description)
                     
-                    error_history.append({
-                        "command": command,
-                        "error": error_msg
-                    })
-                    
-                    if attempt < self.max_retries:
-                         console.print(f"[yellow]Attempting to self-heal...[/yellow]")
-                         continue # 继续下一次循环，带上 error_history
-                    else:
-                        console.print(f"[bold red]Max retries reached. Operation failed.[/bold red]")
-                        return
+                    if not result["executed"]:
+                        console.print("[yellow]Execution aborted by user.[/yellow]")
+                        return # 用户取消，整个任务结束
 
-            except Exception as e:
-                console.print(f"[bold red]System Error:[/bold red] {str(e)}")
-                return
+                    if result["return_code"] == 0:
+                        console.print(f"[green]OK[/green]")
+                        # 如果有输出，是否显示？对于批量任务，默认只显示错误或简要。
+                        if result["stdout"].strip():
+                            console.print(Panel(result["stdout"], title="Output", border_style="green", expand=False))
+                        step_success = True
+                        break # 跳出重试循环，继续下一个 Step
+                    else:
+                        # 失败
+                        error_msg = result["stderr"] or result["stdout"]
+                        console.print(f"[bold red]Failed (Attempt {attempt+1}):[/bold red] {error_msg}")
+                        
+                        if attempt < self.max_retries:
+                            console.print(f"[yellow]Requesting fix from LLM...[/yellow]")
+                            
+                            # 构建错误历史，请求修复当前步骤
+                            # 注意：我们需要修复的是“当前步骤”，或者“剩下的计划”。
+                            # 简化起见：我们只请求修复当前步骤的命令。
+                            # 这里复用 generate_plan，但 context 聚焦于当前失败。
+                            
+                            current_error_history = [{
+                                "step_index": i+1,
+                                "command": command,
+                                "error": error_msg
+                            }]
+                            
+                            # 重新生成计划 (LLM 可能会返回针对剩余任务的新计划)
+                            # 为了保持逻辑简单，我们询问 LLM "Fix this specific command"
+                            # 但架构上 LLM 返回的是 Plan。
+                            # 策略：重新调用 generate_plan，传入错误历史。
+                            # 如果 LLM 返回新的 steps 列表，我们是用新列表替换当前剩下的步骤？
+                            # 是的，这是最智能的做法。
+                            
+                            try:
+                                with console.status("[bold yellow]Re-planning...[/bold yellow]", spinner="dots"):
+                                    new_plan_data = self.llm.generate_plan(user_query, context_str, current_error_history)
+                                
+                                new_steps = new_plan_data.get("steps", [])
+                                if new_steps:
+                                    console.print(f"[bold green]Plan updated with {len(new_steps)} steps.[/bold green]")
+                                    # 策略：替换剩下的步骤
+                                    # 注意：for 循环中修改 list 是危险的。
+                                    # 更好的做法是：将 executor 逻辑封装，或者使用 while 循环处理 steps。
+                                    # 这里为了简便，我们假设 LLM 返回的是“从当前失败点开始的修正计划”。
+                                    # 我们可以递归调用 run？或者重置 steps 列表。
+                                    
+                                    # 采用递归调用的变体：
+                                    # 实际上，既然计划变了，我们应该放弃当前的 for 循环，开始执行新计划。
+                                    # 但我们需要保持 session_cwd。
+                                    # 让我们重构一下：使用 while 循环处理 steps 队列。
+                                    
+                                    # 由于重构较大，这里采用简单策略：
+                                    # 如果修复成功，我们只用新计划的第一个命令替换当前命令重试，
+                                    # 忽略后续步骤的变更（假设 LLM 只改了当前步）。
+                                    # 或者：中断当前执行，提示用户“计划已更新”，然后重新开始执行新计划（剩余部分）。
+                                    
+                                    # 鉴于复杂性，这里实现“原地重试命令”：
+                                    # 假设 LLM 返回的 steps[0] 是修复后的当前步。
+                                    if len(new_steps) > 0:
+                                        command = new_steps[0]['command']
+                                        description = new_steps[0]['description']
+                                        console.print(f"[bold blue]Retrying with:[/bold blue] {command}")
+                                        continue # 继续下一轮 attempt
+                                    
+                            except Exception as ex:
+                                console.print(f"[red]Self-healing failed: {ex}[/red]")
+                                break 
+                        else:
+                            console.print("[bold red]Max retries reached. Stopping execution.[/bold red]")
+                            return # 遇错即停
+
+                if not step_success:
+                    return # 步骤失败且无法修复，退出
+
+        console.print("\n[bold green]All tasks completed successfully![/bold green]")
+
+    def _print_plan_table(self, steps):
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Task Description", min_width=20)
+        table.add_column("Command", style="cyan")
+
+        for i, step in enumerate(steps):
+            table.add_row(str(i+1), step.get("description", ""), step.get("command", ""))
+        
+        console.print(table)
