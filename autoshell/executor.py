@@ -1,6 +1,7 @@
 import subprocess
 import shlex
 import os
+from typing import Optional, Dict, Any
 from rich.console import Console
 from rich.prompt import Confirm
 from rich.panel import Panel
@@ -8,22 +9,49 @@ from rich.syntax import Syntax
 
 console = Console()
 
+# 尝试导入paramiko，如果不存在则SSH功能不可用
+try:
+    import paramiko
+    SSH_AVAILABLE = True
+except ImportError:
+    SSH_AVAILABLE = False
+    paramiko = None  # type: ignore
+
 class CommandExecutor:
     # 不可变白名单 (扩充)
     WHITELIST = {
         "ls", "dir", "pwd", "echo", "date", "whoami", "hostname", "uname", "cd",
-        "mkdir", "touch", "cat", "type", "cp", "mv", "rm", "grep", "find", "head", "tail"
+        "mkdir", "touch", "cat", "type", "cp", "mv", "rm", "grep", "find", "head", "tail",
+        "df", "du", "sort", "wc", "ps", "top", "free", "uptime", "netstat", "ss",
+        "systemctl", "service", "journalctl", "dmesg", "lsof", "which", "whereis",
+        "sudo", "xargs", "awk", "sed"
     }
 
     @classmethod
     def is_safe(cls, command: str) -> bool:
         """
         检查命令是否在白名单中。
+        允许管道操作，但检查管道中的每个命令。
         """
         try:
-            if any(op in command for op in ["&&", "||", ";", "|"]):
+            # 允许管道，但不允许 && || ; 这些可能执行多个独立命令的操作符
+            if any(op in command for op in ["&&", "||", ";"]):
                 return False
 
+            # 如果包含管道，检查管道中的每个命令
+            if "|" in command:
+                # 分割管道命令
+                pipe_commands = command.split("|")
+                for pipe_cmd in pipe_commands:
+                    tokens = shlex.split(pipe_cmd.strip())
+                    if not tokens:
+                        return False
+                    cmd_base = tokens[0].lower()
+                    if cmd_base not in cls.WHITELIST:
+                        return False
+                return True
+            
+            # 单个命令检查
             tokens = shlex.split(command)
             if not tokens:
                 return False
@@ -35,16 +63,22 @@ class CommandExecutor:
             return False
 
     @classmethod
-    def execute(cls, command: str, cwd: str = None, description: str = None) -> dict:
+    def execute(cls, command: str, cwd: Optional[str] = None, description: Optional[str] = None, ssh_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        执行命令，包含安全检查和用户确认。
+        执行命令，包含安全检查和用户确认。支持本地和SSH远程执行。
         
         :param command: 要执行的 Shell 命令
         :param cwd: 命令执行的工作目录 (None 表示当前进程目录)
         :param description: 步骤描述，用于 UI 展示
+        :param ssh_config: SSH配置字典（host, port, password, key_filename）
         :return: 结果字典
         """
         
+        # SSH模式
+        if ssh_config:
+            return cls._execute_ssh(command, cwd, description, ssh_config)
+        
+        # 本地模式
         is_safe_cmd = cls.is_safe(command)
         
         if not is_safe_cmd:
@@ -86,5 +120,130 @@ class CommandExecutor:
                 "return_code": -1,
                 "stdout": "",
                 "stderr": str(e),
+                "executed": True
+            }
+    
+    @classmethod
+    def _execute_ssh(cls, command: str, cwd: Optional[str] = None, description: Optional[str] = None, ssh_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        通过SSH执行远程命令
+        
+        :param command: 要执行的命令
+        :param cwd: 远程工作目录
+        :param description: 步骤描述
+        :param ssh_config: SSH配置
+        :return: 结果字典
+        """
+        if not SSH_AVAILABLE:
+            return {
+                "return_code": -1,
+                "stdout": "",
+                "stderr": "SSH support not available. Please install paramiko: pip install paramiko",
+                "executed": False
+            }
+        
+        if not ssh_config or 'host' not in ssh_config:
+            return {
+                "return_code": -1,
+                "stdout": "",
+                "stderr": "Invalid SSH configuration",
+                "executed": False
+            }
+        
+        # 解析host（可能包含user@host格式）
+        host_str = ssh_config['host']
+        if '@' in host_str:
+            username, hostname = host_str.split('@', 1)
+        else:
+            username = None
+            hostname = host_str
+        
+        port = ssh_config.get('port', 22)
+        password = ssh_config.get('password')
+        key_filename = ssh_config.get('key_filename')
+        
+        # 安全检查（SSH模式下也需要确认危险命令）
+        is_safe_cmd = cls.is_safe(command)
+        
+        if not is_safe_cmd:
+            if description:
+                console.print(f"[bold blue]Step:[/bold blue] {description}")
+            
+            syntax = Syntax(command, "bash", theme="monokai", line_numbers=False)
+            console.print(Panel(syntax, title="[bold red]Review Safe-Check (SSH)[/bold red]", expand=False, border_style="red"))
+            
+            if not Confirm.ask(f"[bold red]Execute on {hostname}?[/bold red]", default=False):
+                return {"return_code": -1, "stdout": "", "stderr": "User aborted execution.", "executed": False}
+        
+        try:
+            # 创建SSH客户端
+            client = paramiko.SSHClient()  # type: ignore
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # type: ignore
+            
+            # 加载SSH配置文件
+            ssh_config_obj = paramiko.SSHConfig()  # type: ignore
+            ssh_config_path = os.path.expanduser('~/.ssh/config')
+            if os.path.exists(ssh_config_path):
+                with open(ssh_config_path) as f:
+                    ssh_config_obj.parse(f)
+                
+                # 查找主机配置
+                host_config = ssh_config_obj.lookup(hostname)
+                
+                # 从配置文件获取实际的主机名和其他参数
+                hostname = host_config.get('hostname', hostname)
+                if not username and 'user' in host_config:
+                    username = host_config['user']
+                if not key_filename and 'identityfile' in host_config:
+                    key_filename = host_config['identityfile'][0] if isinstance(host_config['identityfile'], list) else host_config['identityfile']
+                if 'port' in host_config:
+                    port = int(host_config['port'])
+            
+            # 连接参数
+            connect_kwargs = {
+                'hostname': hostname,
+                'port': port,
+            }
+            
+            if username:
+                connect_kwargs['username'] = username
+            
+            if key_filename:
+                # 展开路径中的 ~
+                key_filename = os.path.expanduser(key_filename)
+                connect_kwargs['key_filename'] = key_filename
+            elif password:
+                connect_kwargs['password'] = password
+            
+            # 连接到远程主机
+            client.connect(**connect_kwargs)
+            
+            # 如果指定了工作目录，需要在命令前加上cd
+            if cwd:
+                command = f"cd {cwd} && {command}"
+            
+            # 执行命令
+            stdin, stdout, stderr = client.exec_command(command)
+            
+            # 获取输出
+            stdout_str = stdout.read().decode('utf-8')
+            stderr_str = stderr.read().decode('utf-8')
+            return_code = stdout.channel.recv_exit_status()
+            
+            # 关闭连接
+            client.close()
+            
+            return {
+                "return_code": return_code,
+                "stdout": stdout_str,
+                "stderr": stderr_str,
+                "executed": True
+            }
+            
+        except Exception as e:
+            return {
+                "return_code": -1,
+                "stdout": "",
+                "stderr": f"SSH Error: {str(e)}",
                 "executed": True
             }

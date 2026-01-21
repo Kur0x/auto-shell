@@ -13,9 +13,15 @@ from .executor import CommandExecutor
 console = Console()
 
 class AutoShellAgent:
-    def __init__(self):
+    def __init__(self, ssh_config=None):
+        """
+        初始化AutoShell Agent
+        
+        :param ssh_config: SSH配置字典，包含host, port, password, key_filename等
+        """
         self.llm = LLMClient()
         self.max_retries = Config.MAX_RETRIES
+        self.ssh_config = ssh_config
 
     def run(self, user_query: str):
         """
@@ -24,8 +30,12 @@ class AutoShellAgent:
         """
         error_history = []
         
-        # 维护当前 Session 的 CWD，初始为程序启动时的 CWD
-        session_cwd = os.getcwd() 
+        # 维护当前 Session 的 CWD
+        # SSH模式下使用远程主机的家目录，本地模式使用当前目录
+        if self.ssh_config:
+            session_cwd = None  # SSH模式下不指定工作目录，使用远程默认目录
+        else:
+            session_cwd = os.getcwd()  # 本地模式使用当前目录 
 
         # 1. Generate Plan (Context Aware)
         context_str = ContextManager.get_context_string()
@@ -79,29 +89,43 @@ class AutoShellAgent:
                 tokens = command.split()
 
             if tokens and tokens[0] == "cd":
-                target_dir = tokens[1] if len(tokens) > 1 else "~"
-                # 处理 ~
-                if target_dir == "~":
-                    target_dir = os.path.expanduser("~")
-                
-                # 计算绝对路径
-                new_cwd = os.path.abspath(os.path.join(session_cwd, target_dir))
-                
-                if os.path.isdir(new_cwd):
-                    session_cwd = new_cwd
-                    console.print(f"[green] Changed directory to: {session_cwd}[/green]")
-                    continue # CD 成功，进入下一步
+                # SSH模式下，CD命令由远程shell处理，不在本地模拟
+                if self.ssh_config:
+                    # SSH模式：更新session_cwd用于显示，但实际由远程执行
+                    target_dir = tokens[1] if len(tokens) > 1 else "~"
+                    if session_cwd and target_dir.startswith('/'):
+                        session_cwd = target_dir
+                    elif session_cwd:
+                        session_cwd = f"{session_cwd}/{target_dir}" if session_cwd != "~" else target_dir
+                    else:
+                        session_cwd = target_dir
+                    console.print(f"[green]✓ Changed directory to: {session_cwd}[/green]")
+                    continue
                 else:
-                    console.print(f"[red]Directory not found: {new_cwd}[/red]")
-                    # 这里也可以选择中断，或者让 LLM 修复。
-                    # 为了简单，视为失败，触发 Error Handler。
-                    result = {"return_code": 1, "stdout": "", "stderr": f"Directory not found: {new_cwd}", "executed": True}
+                    # 本地模式：实际改变工作目录
+                    target_dir = tokens[1] if len(tokens) > 1 else "~"
+                    # 处理 ~
+                    if target_dir == "~":
+                        target_dir = os.path.expanduser("~")
+                    
+                    # 计算绝对路径（本地模式session_cwd不会是None）
+                    new_cwd = os.path.abspath(os.path.join(session_cwd or os.getcwd(), target_dir))
+                    
+                    if os.path.isdir(new_cwd):
+                        session_cwd = new_cwd
+                        console.print(f"[green]✓ Changed directory to: {session_cwd}[/green]")
+                        continue # CD 成功，进入下一步
+                    else:
+                        console.print(f"[red]Directory not found: {new_cwd}[/red]")
+                        # 这里也可以选择中断，或者让 LLM 修复。
+                        # 为了简单，视为失败，触发 Error Handler。
+                        result = {"return_code": 1, "stdout": "", "stderr": f"Directory not found: {new_cwd}", "executed": True}
             else:
                 # 执行普通命令
                 # 实现针对单个步骤的重试循环
                 step_success = False
                 for attempt in range(self.max_retries + 1):
-                    result = CommandExecutor.execute(command, cwd=session_cwd, description=description)
+                    result = CommandExecutor.execute(command, cwd=session_cwd, description=description, ssh_config=self.ssh_config)
                     
                     if not result["executed"]:
                         console.print("[yellow]Execution aborted by user.[/yellow]")
