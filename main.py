@@ -123,12 +123,36 @@ def main():
 
         agent = AutoShellAgent(ssh_config=ssh_config)
         
-        # 显示当前上下文
-        ctx = ContextManager.get_full_context()
+        # 显示当前上下文（使用增强的信息）
         if ssh_config:
-            console.print(f"[dim]Mode: SSH Remote | Target: {args.ssh_host}[/dim]\n")
+            # SSH模式
+            if agent._system_info_cache:
+                info = agent._system_info_cache
+                distro = info.get('distro_pretty_name', 'Unknown Linux')
+                arch = info.get('architecture', 'unknown')
+                pkg_mgr = info.get('package_manager', 'unknown')
+                console.print(f"[dim]Remote System: {distro} | {arch} | Package Manager: {pkg_mgr}[/dim]\n")
+            else:
+                console.print(f"[dim]Mode: SSH Remote | Target: {args.ssh_host}[/dim]\n")
         else:
-            console.print(f"[dim]Detected: {ctx['os']} | {ctx['shell']} | {ctx['user']}[/dim]\n")
+            # 本地模式
+            if agent._system_info_cache:
+                info = agent._system_info_cache
+                os_type = info.get('os_type', 'Unknown')
+                
+                if os_type == "Linux":
+                    distro = info.get('distro_pretty_name', 'Unknown Linux')
+                    pkg_mgr = info.get('package_manager', 'unknown')
+                    console.print(f"[dim]Detected: {distro} | Package Manager: {pkg_mgr}[/dim]\n")
+                elif os_type == "Windows":
+                    win_ver = info.get('windows_release', 'Unknown')
+                    console.print(f"[dim]Detected: Windows {win_ver} | {info.get('architecture', 'unknown')}[/dim]\n")
+                elif os_type == "Darwin":
+                    macos_release = info.get('macos_release', 'Unknown')
+                    console.print(f"[dim]Detected: macOS {macos_release} | {info.get('architecture', 'unknown')}[/dim]\n")
+            else:
+                ctx = ContextManager.get_full_context()
+                console.print(f"[dim]Detected: {ctx['os']} | {ctx['shell']} | {ctx['user']}[/dim]\n")
 
         # 一次性执行模式
         if args.command:

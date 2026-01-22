@@ -5,8 +5,9 @@ AutoShell 是一个智能命令行助手，使用 AI 将自然语言转换为 Sh
 ## 核心特性
 
 ✅ **自然语言转命令** - 用自然语言描述任务，AI 自动生成并执行命令
-✅ **自适应执行** - 根据执行结果动态调整策略（新功能！）
-✅ **SSH 远程执行** - 支持在远程服务器上执行命令
+✅ **智能环境识别** - 自动识别OS发行版和包管理器，生成精准命令（新功能！）
+✅ **自适应执行** - 根据执行结果动态调整策略
+✅ **SSH 远程执行** - 支持在远程服务器上执行命令，自动识别远程环境
 ✅ **安全机制** - 命令白名单和用户确认
 ✅ **错误自愈** - 执行失败时自动修复
 ✅ **跨平台支持** - Windows、Linux、macOS
@@ -201,7 +202,25 @@ LLM_MODEL=your-model
 ```bash
 # 最大重试次数
 MAX_RETRIES=3
+
+# 系统信息收集配置（新功能！）
+COLLECT_DETAILED_INFO=true      # 是否收集详细系统信息
+SYSTEM_INFO_CACHE_TTL=300       # 系统信息缓存时间（秒）
+SSH_INFO_TIMEOUT=10             # SSH信息收集超时（秒）
 ```
+
+**智能环境识别**：AutoShell 现在能够自动识别：
+- Linux发行版（Ubuntu、CentOS、Debian等）和版本
+- 包管理器（apt、yum、dnf、pacman等）
+- 系统架构（x86_64、aarch64等）
+- SSH远程服务器的详细信息
+
+这使得AI能够生成更精准的命令，例如：
+- Ubuntu系统自动使用 `apt`
+- CentOS 8自动使用 `dnf`
+- Arch Linux自动使用 `pacman`
+
+详细文档：[OS_INFO_FEATURE.md](OS_INFO_FEATURE.md)
 
 ### 命令行参数
 
@@ -276,9 +295,10 @@ python main.py --adaptive -c "你的任务" 2>&1 | tee debug.log
 
 ## 文档
 
+- [智能环境识别](OS_INFO_FEATURE.md) - OS信息增强功能 ⭐ 新增
 - [自适应执行模式](ADAPTIVE_MODE.md) - 详细使用指南
 - [SSH 使用指南](SSH_USAGE.md) - SSH 配置和使用
-- [Ollama 设置指南](plans/OLLAMA_SETUP.md) - 本地 LLM 配置 ⭐ 新增
+- [Ollama 设置指南](plans/OLLAMA_SETUP.md) - 本地 LLM 配置
 - [设计文档](plans/) - 架构设计和实现细节
 
 ## 常见问题
@@ -313,6 +333,15 @@ MIT License
 
 ## 更新日志
 
+### v1.2.0 (2026-01-22)
+
+- ✨ 新增智能环境识别功能
+- ✨ 自动识别Linux发行版和包管理器
+- ✨ SSH模式支持远程系统信息收集
+- ✨ 根据OS类型生成精准命令
+- 🚀 系统信息缓存机制提升性能
+- 📝 新增OS信息功能文档
+
 ### v1.1.0 (2026-01-21)
 
 - ✨ 新增自适应执行模式
@@ -328,4 +357,4 @@ MIT License
 
 ---
 
-**文档更新**：2026-01-21
+**文档更新**：2026-01-22

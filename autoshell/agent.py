@@ -1,5 +1,6 @@
 import os
 import shlex
+import time
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -7,6 +8,7 @@ from rich.status import Status
 
 from .config import Config
 from .context import ContextManager
+from .ssh_context import SSHContextManager
 from .llm import LLMClient
 from .executor import CommandExecutor
 
@@ -22,6 +24,47 @@ class AutoShellAgent:
         self.llm = LLMClient()
         self.max_retries = Config.MAX_RETRIES
         self.ssh_config = ssh_config
+        
+        # 系统信息缓存
+        self._system_info_cache = None
+        self._cache_timestamp = None
+        self._cache_ttl = Config.SYSTEM_INFO_CACHE_TTL
+        
+        # 初始化时收集系统信息
+        if Config.COLLECT_DETAILED_INFO:
+            self._initialize_system_info()
+    
+    def _initialize_system_info(self):
+        """初始化系统信息"""
+        try:
+            if self.ssh_config:
+                # SSH模式：收集远程信息
+                with console.status("[bold green]Collecting remote system info...[/bold green]", spinner="dots"):
+                    self._system_info_cache = SSHContextManager.get_remote_system_info(self.ssh_config)
+            else:
+                # 本地模式：收集本地信息
+                self._system_info_cache = ContextManager.get_detailed_os_info()
+            
+            self._cache_timestamp = time.time()
+            
+            if Config.DEBUG:
+                console.print(f"[dim][DEBUG] System info collected: {self._system_info_cache}[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to collect system info: {e}[/yellow]")
+            self._system_info_cache = None
+    
+    def _get_system_info(self) -> dict:
+        """获取系统信息（带缓存）"""
+        now = time.time()
+        
+        # 检查缓存是否有效
+        if self._system_info_cache and self._cache_timestamp:
+            if (now - self._cache_timestamp) < self._cache_ttl:
+                return self._system_info_cache
+        
+        # 缓存过期或不存在，重新收集
+        self._initialize_system_info()
+        return self._system_info_cache or {}
 
     def run(self, user_query: str):
         """
@@ -37,14 +80,16 @@ class AutoShellAgent:
         else:
             session_cwd = os.getcwd()  # 本地模式使用当前目录 
 
-        # 1. Generate Plan (Context Aware)
-        context_str = ContextManager.get_context_string()
+        # 1. Generate Plan (Context Aware) - 使用增强的上下文信息
+        system_info = self._get_system_info()
         
-        # 将当前的 session_cwd 注入到 Context 中，虽然 ContextManager.get_cwd() 也能获取，
-        # 但如果是长会话，session_cwd 可能会变，这里还是以 ContextManager 为准（假设它是实时的），
-        # 或者我们显式告知 LLM 当前模拟的 CWD。
-        # 修正：ContextManager 获取的是 os.getcwd()，如果 AutoShell 进程本身不chdir，它一直不变。
-        # 我们应该告诉 LLM 当前的 session_cwd。
+        if self.ssh_config:
+            # SSH模式：使用远程系统信息
+            context_str = SSHContextManager.format_remote_context(system_info)
+        else:
+            # 本地模式：使用本地系统信息
+            context_str = ContextManager.get_enhanced_context_string(system_info)
+        
         context_str += f"\n- Virtual Session CWD: {session_cwd}"
 
         # 尝试生成计划
@@ -224,11 +269,14 @@ class AutoShellAgent:
         iteration = 0
         is_complete = False
         
-        # 获取上下文
-        context_str = ContextManager.get_context_string()
+        # 获取上下文 - 使用增强的上下文信息
+        system_info = self._get_system_info()
+        
         if self.ssh_config:
+            context_str = SSHContextManager.format_remote_context(system_info)
             session_cwd = None
         else:
+            context_str = ContextManager.get_enhanced_context_string(system_info)
             session_cwd = os.getcwd()
         context_str += f"\n- Virtual Session CWD: {session_cwd}"
         
