@@ -96,13 +96,14 @@ class LLMClient:
         
         return content.strip()
 
-    def generate_plan(self, user_query: str, context_str: str, error_history: list | None = None) -> dict:
+    def generate_plan(self, user_query: str, context_str: str, error_history: list | None = None, user_context: str = "") -> dict:
         """
         根据用户查询和环境上下文生成 Shell 命令计划。
         
         :param user_query: 用户的自然语言指令
         :param context_str: 格式化后的系统环境信息
         :param error_history: 之前的错误历史，用于重试/自愈逻辑
+        :param user_context: 用户提供的上下文文件内容
         :return: 解析后的 JSON 字典 {"thought": ..., "steps": [{"description":..., "command":...}, ...]}
         """
         
@@ -116,6 +117,8 @@ Your goal is to translate natural language instructions into a SERIES of precise
 
 Current Execution Environment:
 {context_str}
+
+{user_context}
 
 ⚠️ IMPORTANT: Pay special attention to the system information above!
 - For Ubuntu/Debian systems (apt): use apt or apt-get commands
@@ -350,7 +353,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
         user_goal: str,
         context_str: str,
         execution_history: list,
-        max_steps: int = 3
+        max_steps: int = 3,
+        user_context: str = ""
     ) -> dict:
         """
         根据当前状态生成接下来的步骤（渐进式执行）
@@ -359,6 +363,7 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
         :param context_str: 系统环境信息
         :param execution_history: 已执行的步骤历史 [{"description": ..., "command": ..., "output": ..., "success": ...}, ...]
         :param max_steps: 最多生成几个步骤
+        :param user_context: 用户提供的上下文文件内容
         :return: {"thought": ..., "steps": [...], "is_complete": bool}
         """
         
@@ -374,6 +379,8 @@ You are an expert system engineer with the ability to break down complex tasks i
 
 Current Execution Environment:
 {context_str}
+
+{user_context}
 
 ⚠️ IMPORTANT: Pay special attention to the system information above!
 - For Ubuntu/Debian systems (apt): use apt or apt-get commands

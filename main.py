@@ -27,6 +27,12 @@ Examples:
   # 一次性执行（本地）
   python main.py -c "列出当前目录下的所有文件"
   
+  # 使用上下文文件
+  python main.py -f examples.txt -c "创建类似的脚本"
+  
+  # 使用多个上下文文件
+  python main.py -f config.md -f examples.txt -c "配置环境"
+  
   # 自适应执行模式（根据输出动态调整）
   python main.py --adaptive -c "执行test.sh，如果输出为1则修改为2"
   
@@ -41,6 +47,9 @@ Examples:
   
   # SSH模式（使用密钥）
   python main.py --ssh-host user@example.com --ssh-key ~/.ssh/id_rsa -c "重启nginx"
+  
+  # SSH + 上下文文件
+  python main.py --ssh-host user@example.com -f deploy.md -c "部署应用"
         """
     )
     
@@ -49,6 +58,15 @@ Examples:
         '-c', '--command',
         type=str,
         help='一次性执行命令后退出（非交互模式）'
+    )
+    
+    # 上下文文件参数
+    parser.add_argument(
+        '-f', '--context-file',
+        type=str,
+        action='append',
+        dest='context_files',
+        help='提供上下文文件（可多次使用）'
     )
     
     # SSH相关参数
@@ -98,6 +116,31 @@ def main():
         # 设置全局DEBUG标志
         Config.DEBUG = args.debug
         
+        # 处理上下文文件
+        context_files_data = []
+        if args.context_files:
+            from autoshell.context_file import ContextFileManager
+            
+            # 检查文件数量限制
+            if len(args.context_files) > Config.MAX_CONTEXT_FILES:
+                console.print(f"[bold red]错误:[/bold red] 上下文文件数量超过限制 (最多 {Config.MAX_CONTEXT_FILES} 个)")
+                sys.exit(1)
+            
+            # 读取上下文文件
+            with console.status("[bold green]正在读取上下文文件...[/bold green]", spinner="dots"):
+                context_files_data = ContextFileManager.read_multiple_files(
+                    args.context_files,
+                    Config.MAX_CONTEXT_FILE_SIZE
+                )
+            
+            # 检查是否成功读取任何文件
+            if not context_files_data:
+                console.print("[bold red]错误:[/bold red] 无法读取任何上下文文件")
+                sys.exit(1)
+            
+            # 显示文件摘要
+            ContextFileManager.display_file_summary(context_files_data)
+        
         # 判断是否为SSH模式
         ssh_config = None
         if args.ssh_host:
@@ -121,9 +164,9 @@ def main():
                 border_style="blue"
             ))
 
-        # 初始化Agent（SSH模式下会先测试连接）
+        # 初始化Agent（SSH模式下会先测试连接，传递上下文文件）
         try:
-            agent = AutoShellAgent(ssh_config=ssh_config)
+            agent = AutoShellAgent(ssh_config=ssh_config, context_files=context_files_data)
         except ConnectionError as e:
             # SSH连接失败，直接退出
             console.print(f"\n[bold red]Error:[/bold red] Unable to establish SSH connection.")

@@ -1,0 +1,22 @@
+# Shell命令示例
+
+## 文件操作
+ls -la                          # 列出所有文件（包括隐藏文件）
+mkdir -p /path/to/dir          # 创建目录（包括父目录）
+cp -r source/ dest/            # 递归复制目录
+rm -rf /path/to/dir            # 递归删除目录
+
+## 文本处理
+grep -r "pattern" .            # 递归搜索文本
+sed -i 's/old/new/g' file.txt  # 替换文件内容
+awk '{print $1}' file.txt      # 打印第一列
+
+## 系统信息
+df -h                          # 查看磁盘使用情况
+free -h                        # 查看内存使用情况
+ps aux | grep process          # 查找进程
+
+## 网络操作
+curl -I https://example.com    # 获取HTTP头
+wget https://example.com/file  # 下载文件
+ping -c 4 example.com          # 测试网络连接

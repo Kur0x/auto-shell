@@ -15,15 +15,17 @@ from .executor import CommandExecutor
 console = Console()
 
 class AutoShellAgent:
-    def __init__(self, ssh_config=None):
+    def __init__(self, ssh_config=None, context_files=None):
         """
         初始化AutoShell Agent
         
         :param ssh_config: SSH配置字典，包含host, port, password, key_filename等
+        :param context_files: 用户提供的上下文文件列表
         """
         self.llm = LLMClient()
         self.max_retries = Config.MAX_RETRIES
         self.ssh_config = ssh_config
+        self.context_files = context_files or []
         
         # 系统信息缓存
         self._system_info_cache = None
@@ -106,11 +108,17 @@ class AutoShellAgent:
             context_str = ContextManager.get_enhanced_context_string(system_info)
         
         context_str += f"\n- Virtual Session CWD: {session_cwd}"
+        
+        # 添加用户上下文文件
+        user_context = ""
+        if self.context_files:
+            from .context_file import ContextFileManager
+            user_context = ContextFileManager.format_context_string(self.context_files)
 
         # 尝试生成计划
         try:
             with console.status("[bold green]Generating plan...[/bold green]", spinner="dots"):
-                plan_data = self.llm.generate_plan(user_query, context_str)
+                plan_data = self.llm.generate_plan(user_query, context_str, user_context=user_context)
         except Exception as e:
             console.print(f"[bold red]Planning Error:[/bold red] {str(e)}")
             return
@@ -295,6 +303,12 @@ class AutoShellAgent:
             session_cwd = os.getcwd()
         context_str += f"\n- Virtual Session CWD: {session_cwd}"
         
+        # 添加用户上下文文件
+        user_context = ""
+        if self.context_files:
+            from .context_file import ContextFileManager
+            user_context = ContextFileManager.format_context_string(self.context_files)
+        
         console.print(f"[bold cyan]目标:[/bold cyan] {user_query}\n")
         
         # 执行循环
@@ -309,7 +323,8 @@ class AutoShellAgent:
                         user_goal=user_query,
                         context_str=context_str,
                         execution_history=execution_history,
-                        max_steps=3
+                        max_steps=3,
+                        user_context=user_context
                     )
             except Exception as e:
                 console.print(f"[bold red]生成步骤失败:[/bold red] {str(e)}")

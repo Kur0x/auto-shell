@@ -18,6 +18,11 @@ class Config:
     COLLECT_DETAILED_INFO = os.getenv("COLLECT_DETAILED_INFO", "true").lower() == "true"
     SYSTEM_INFO_CACHE_TTL = int(os.getenv("SYSTEM_INFO_CACHE_TTL", "300"))  # 秒
     SSH_INFO_TIMEOUT = int(os.getenv("SSH_INFO_TIMEOUT", "10"))  # 秒
+    
+    # 上下文文件配置
+    MAX_CONTEXT_FILE_SIZE = int(os.getenv("MAX_CONTEXT_FILE_SIZE", "1048576"))  # 1MB
+    MAX_CONTEXT_FILES = int(os.getenv("MAX_CONTEXT_FILES", "5"))
+    CONTEXT_FILE_ENCODING = os.getenv("CONTEXT_FILE_ENCODING", "utf-8")
 
     @staticmethod
     def is_ollama() -> bool:

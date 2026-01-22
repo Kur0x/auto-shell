@@ -5,7 +5,8 @@ AutoShell 是一个智能命令行助手，使用 AI 将自然语言转换为 Sh
 ## 核心特性
 
 ✅ **自然语言转命令** - 用自然语言描述任务，AI 自动生成并执行命令
-✅ **智能环境识别** - 自动识别OS发行版和包管理器，生成精准命令（新功能！）
+✅ **智能环境识别** - 自动识别OS发行版和包管理器，生成精准命令
+✅ **上下文文件支持** - 提供文本文件作为上下文，让AI更好地理解需求（新功能！）
 ✅ **自适应执行** - 根据执行结果动态调整策略
 ✅ **SSH 远程执行** - 支持在远程服务器上执行命令，自动识别远程环境
 ✅ **安全机制** - 命令白名单和用户确认
@@ -64,7 +65,33 @@ python main.py --adaptive -c "读取config.json，如果debug为false则改为tr
 
 详细文档：[ADAPTIVE_MODE.md](ADAPTIVE_MODE.md)
 
-#### 3. SSH 远程模式
+#### 3. 上下文文件模式（新功能！）
+
+上下文文件功能允许您提供文本文件作为上下文信息，让AI更好地理解您的需求。
+
+```bash
+# 使用单个上下文文件
+python main.py -f examples.txt -c "创建类似的脚本"
+
+# 使用多个上下文文件
+python main.py -f config.md -f examples.txt -c "配置环境"
+
+# 结合自适应模式
+python main.py --adaptive -f requirements.md -c "检查并安装依赖"
+
+# 结合SSH模式
+python main.py --ssh-host user@server -f deploy.md -c "部署应用"
+```
+
+**上下文文件用途**：
+- 提供命令示例供参考
+- 说明配置要求和规范
+- 提供项目文档和说明
+- 指定环境配置指令（如proxy设置）
+
+详细文档：[CONTEXT_FILE_USAGE.md](CONTEXT_FILE_USAGE.md)
+
+#### 4. SSH 远程模式
 
 ```bash
 # SSH 交互模式
@@ -82,7 +109,7 @@ python main.py --ssh-host user@example.com --ssh-key ~/.ssh/id_rsa -c "重启服
 
 详细文档：[SSH_USAGE.md](SSH_USAGE.md)
 
-#### 4. 调试模式
+#### 5. 调试模式
 
 默认情况下，AutoShell 不显示调试信息。如需查看详细的执行日志，可以使用 `--debug` 参数：
 
@@ -295,7 +322,8 @@ python main.py --adaptive -c "你的任务" 2>&1 | tee debug.log
 
 ## 文档
 
-- [智能环境识别](OS_INFO_FEATURE.md) - OS信息增强功能 ⭐ 新增
+- [上下文文件使用指南](CONTEXT_FILE_USAGE.md) - 上下文文件功能详解 ⭐ 新增
+- [智能环境识别](OS_INFO_FEATURE.md) - OS信息增强功能
 - [自适应执行模式](ADAPTIVE_MODE.md) - 详细使用指南
 - [SSH 使用指南](SSH_USAGE.md) - SSH 配置和使用
 - [Ollama 设置指南](plans/OLLAMA_SETUP.md) - 本地 LLM 配置
