@@ -106,7 +106,7 @@ def main():
         else:
             console.print(Panel.fit(
                 "[bold blue]AutoShell[/bold blue] - Intelligent Command Line Assistant\n"
-                "Type 'exit' or 'quit' to close.",
+                "Type 'exit' or 'quit' to close, or press Ctrl+D.",
                 title="Welcome",
                 border_style="blue"
             ))
@@ -139,7 +139,12 @@ def main():
                 if user_input.lower() in ["exit", "quit"]:
                     console.print("[bold green]Goodbye![/bold green]")
                     break
-                
+
+                # 检查Ctrl+D退出
+                if user_input == '\x04':
+                    console.print("[bold green]Goodbye![/bold green]")
+                    break
+
                 # 检查是否使用自适应模式
                 if args.adaptive:
                     agent.run_adaptive(user_input)
