@@ -146,17 +146,25 @@ class AutoShellAgent:
             console.print(f"[dim]Command: {command}[/dim]")
             console.print(f"[dim]CWD: {session_cwd}[/dim]")
 
-            # 检查是否是 CD 命令 (纯状态变更)
-            # 解析 command，如果是 'cd path'
-            # Windows 下 shlex 默认 posix=True 会吃掉反斜杠，需根据 OS 调整
-            use_posix = os.name != 'nt' 
-            try:
-                tokens = shlex.split(command, posix=use_posix)
-            except ValueError:
-                # 应对未闭合引号等情况，简单回退到 split
-                tokens = command.split()
-
-            if tokens and tokens[0] == "cd":
+            # 检查是否是纯 CD 命令 (纯状态变更)
+            # 只有不包含 &&、||、; 等操作符的纯 cd 命令才进行特殊处理
+            # 包含这些操作符的组合命令应该交给 shell 执行
+            is_pure_cd = False
+            tokens = []
+            if not any(op in command for op in ["&&", "||", ";", "|"]):
+                # 解析 command，如果是 'cd path'
+                # Windows 下 shlex 默认 posix=True 会吃掉反斜杠，需根据 OS 调整
+                use_posix = os.name != 'nt'
+                try:
+                    tokens = shlex.split(command, posix=use_posix)
+                except ValueError:
+                    # 应对未闭合引号等情况，简单回退到 split
+                    tokens = command.split()
+                
+                if tokens and tokens[0] == "cd":
+                    is_pure_cd = True
+            
+            if is_pure_cd:
                 # SSH模式下，CD命令由远程shell处理，不在本地模拟
                 if self.ssh_config:
                     # SSH模式：更新session_cwd用于显示，但实际由远程执行
@@ -354,15 +362,22 @@ class AutoShellAgent:
                 console.print(f"[dim]命令: {command}[/dim]")
                 console.print(f"[dim]工作目录: {session_cwd}[/dim]")
                 
-                # 检查是否是 CD 命令
-                use_posix = os.name != 'nt'
-                try:
-                    tokens = shlex.split(command, posix=use_posix)
-                except ValueError:
-                    tokens = command.split()
+                # 检查是否是纯 CD 命令
+                # 只有不包含 &&、||、; 等操作符的纯 cd 命令才进行特殊处理
+                is_pure_cd = False
+                tokens = []
+                if not any(op in command for op in ["&&", "||", ";", "|"]):
+                    use_posix = os.name != 'nt'
+                    try:
+                        tokens = shlex.split(command, posix=use_posix)
+                    except ValueError:
+                        tokens = command.split()
+                    
+                    if tokens and tokens[0] == "cd":
+                        is_pure_cd = True
                 
-                if tokens and tokens[0] == "cd":
-                    # 处理 CD 命令
+                if is_pure_cd:
+                    # 处理纯 CD 命令
                     if self.ssh_config:
                         target_dir = tokens[1] if len(tokens) > 1 else "~"
                         if session_cwd and target_dir.startswith('/'):
