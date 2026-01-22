@@ -102,20 +102,100 @@ class CommandExecutor:
                     "executed": True
                 }
 
-            result = subprocess.run(
+            # 使用Popen实现实时输出
+            process = subprocess.Popen(
                 command,
                 shell=True,
-                cwd=cwd, # 关键变更：支持指定工作目录
-                capture_output=True,
-                text=True
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1  # 行缓冲
             )
             
-            return {
-                "return_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "executed": True
-            }
+            stdout_lines = []
+            stderr_lines = []
+            
+            # 实时读取输出
+            try:
+                while True:
+                    # 检查进程是否结束
+                    if process.poll() is not None:
+                        break
+                    
+                    # 读取stdout（非阻塞）
+                    import select
+                    import sys
+                    
+                    # Windows不支持select，使用简单的readline
+                    if sys.platform == 'win32':
+                        if process.stdout:
+                            line = process.stdout.readline()
+                            if line:
+                                stdout_lines.append(line)
+                                print(line, end='', flush=True)
+                    else:
+                        # Unix系统使用select
+                        streams = []
+                        if process.stdout:
+                            streams.append(process.stdout)
+                        if process.stderr:
+                            streams.append(process.stderr)
+                        
+                        if streams:
+                            readable, _, _ = select.select(streams, [], [], 0.1)
+                            
+                            if process.stdout and process.stdout in readable:
+                                line = process.stdout.readline()
+                                if line:
+                                    stdout_lines.append(line)
+                                    print(line, end='', flush=True)
+                            
+                            if process.stderr and process.stderr in readable:
+                                line = process.stderr.readline()
+                                if line:
+                                    stderr_lines.append(line)
+                                    console.print(line, style="red", end='')
+                
+                # 读取剩余输出
+                if process.stdout:
+                    remaining_stdout = process.stdout.read()
+                    if remaining_stdout:
+                        stdout_lines.append(remaining_stdout)
+                        print(remaining_stdout, end='', flush=True)
+                
+                if process.stderr:
+                    remaining_stderr = process.stderr.read()
+                    if remaining_stderr:
+                        stderr_lines.append(remaining_stderr)
+                        console.print(remaining_stderr, style="red", end='')
+                
+                # 等待进程结束
+                process.wait()
+                
+                return {
+                    "return_code": process.returncode,
+                    "stdout": ''.join(stdout_lines),
+                    "stderr": ''.join(stderr_lines),
+                    "executed": True
+                }
+                
+            except KeyboardInterrupt:
+                # 用户中断
+                console.print("\n[yellow]Terminating process...[/yellow]")
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                
+                return {
+                    "return_code": -1,
+                    "stdout": ''.join(stdout_lines),
+                    "stderr": "Process interrupted by user (Ctrl+C)",
+                    "executed": True
+                }
+                
         except Exception as e:
              return {
                 "return_code": -1,
@@ -236,29 +316,39 @@ class CommandExecutor:
             stderr_data = []
             
             try:
-                # 非阻塞读取输出，可以响应KeyboardInterrupt
+                # 非阻塞读取输出，实时显示并可响应KeyboardInterrupt
                 while not stdout.channel.exit_status_ready():
                     # 检查是否有标准输出数据
                     if stdout.channel.recv_ready():
                         data = stdout.channel.recv(4096)
-                        stdout_data.append(data.decode('utf-8', errors='replace'))
+                        decoded = data.decode('utf-8', errors='replace')
+                        stdout_data.append(decoded)
+                        # 实时输出到控制台
+                        print(decoded, end='', flush=True)
                     
                     # 检查是否有标准错误数据
                     if stdout.channel.recv_stderr_ready():
                         data = stdout.channel.recv_stderr(4096)
-                        stderr_data.append(data.decode('utf-8', errors='replace'))
+                        decoded = data.decode('utf-8', errors='replace')
+                        stderr_data.append(decoded)
+                        # 实时输出错误到控制台（使用红色）
+                        console.print(decoded, style="red", end='')
                     
                     # 短暂休眠，避免CPU占用过高
-                    time.sleep(0.1)
+                    time.sleep(0.05)  # 减少延迟以提高响应速度
                 
                 # 读取剩余数据
                 while stdout.channel.recv_ready():
                     data = stdout.channel.recv(4096)
-                    stdout_data.append(data.decode('utf-8', errors='replace'))
+                    decoded = data.decode('utf-8', errors='replace')
+                    stdout_data.append(decoded)
+                    print(decoded, end='', flush=True)
                 
                 while stdout.channel.recv_stderr_ready():
                     data = stdout.channel.recv_stderr(4096)
-                    stderr_data.append(data.decode('utf-8', errors='replace'))
+                    decoded = data.decode('utf-8', errors='replace')
+                    stderr_data.append(decoded)
+                    console.print(decoded, style="red", end='')
                 
                 # 获取退出状态
                 return_code = stdout.channel.recv_exit_status()
@@ -289,14 +379,18 @@ class CommandExecutor:
                         stdout.channel.send(b'\x03')
                         time.sleep(0.5)
                     
-                    # 读取已有输出
+                    # 读取剩余输出并实时显示
                     while stdout.channel.recv_ready():
                         data = stdout.channel.recv(4096)
-                        stdout_data.append(data.decode('utf-8', errors='replace'))
+                        decoded = data.decode('utf-8', errors='replace')
+                        stdout_data.append(decoded)
+                        print(decoded, end='', flush=True)
                     
                     while stdout.channel.recv_stderr_ready():
                         data = stdout.channel.recv_stderr(4096)
-                        stderr_data.append(data.decode('utf-8', errors='replace'))
+                        decoded = data.decode('utf-8', errors='replace')
+                        stderr_data.append(decoded)
+                        console.print(decoded, style="red", end='')
                     
                 except Exception as e:
                     # 忽略发送中断信号时的错误
