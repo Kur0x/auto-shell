@@ -86,8 +86,8 @@ class CommandExecutor:
             if description:
                 console.print(f"[bold blue]Step:[/bold blue] {description}")
             
-            syntax = Syntax(command, "bash", theme="monokai", line_numbers=False)
-            console.print(Panel(syntax, title="[bold red]Review Safe-Check[/bold red]", expand=False, border_style="red"))
+            syntax = Syntax(command, "bash", theme="monokai", line_numbers=False, word_wrap=True)
+            console.print(Panel(syntax, title="[bold red]Review Safe-Check[/bold red]", expand=True, border_style="red"))
             
             if not Confirm.ask("[bold red]Command not in whitelist. Execute?[/bold red]", default=True):
                 return {"return_code": -1, "stdout": "", "stderr": "User aborted execution.", "executed": False}
@@ -170,8 +170,8 @@ class CommandExecutor:
             if description:
                 console.print(f"[bold blue]Step:[/bold blue] {description}")
             
-            syntax = Syntax(command, "bash", theme="monokai", line_numbers=False)
-            console.print(Panel(syntax, title="[bold red]Review Safe-Check (SSH)[/bold red]", expand=False, border_style="red"))
+            syntax = Syntax(command, "bash", theme="monokai", line_numbers=False, word_wrap=True)
+            console.print(Panel(syntax, title="[bold red]Review Safe-Check (SSH)[/bold red]", expand=True, border_style="red"))
             
             if not Confirm.ask(f"[bold red]Execute on {hostname}?[/bold red]", default=True):
                 return {"return_code": -1, "stdout": "", "stderr": "User aborted execution.", "executed": False}
