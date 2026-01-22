@@ -2,6 +2,8 @@ import subprocess
 import shlex
 import os
 import time
+import sys
+import select
 from typing import Optional, Dict, Any
 from rich.console import Console
 from rich.prompt import Confirm
@@ -317,6 +319,7 @@ class CommandExecutor:
             
             try:
                 # 非阻塞读取输出，实时显示并可响应KeyboardInterrupt
+                # 同时支持交互式输入（如sudo密码）
                 while not stdout.channel.exit_status_ready():
                     # 检查是否有标准输出数据
                     if stdout.channel.recv_ready():
@@ -333,6 +336,22 @@ class CommandExecutor:
                         stderr_data.append(decoded)
                         # 实时输出错误到控制台（使用红色）
                         console.print(decoded, style="red", end='')
+                    
+                    # 检查是否有用户输入（支持交互式命令如sudo）
+                    # Windows不支持select on stdin，使用msvcrt
+                    if sys.platform == 'win32':
+                        import msvcrt
+                        if msvcrt.kbhit():
+                            user_input = input()
+                            stdin.write(user_input + '\n')
+                            stdin.flush()
+                    else:
+                        # Unix系统使用select检查stdin
+                        readable, _, _ = select.select([sys.stdin], [], [], 0)
+                        if sys.stdin in readable:
+                            user_input = sys.stdin.readline()
+                            stdin.write(user_input)
+                            stdin.flush()
                     
                     # 短暂休眠，避免CPU占用过高
                     time.sleep(0.05)  # 减少延迟以提高响应速度
