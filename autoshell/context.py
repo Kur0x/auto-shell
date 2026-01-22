@@ -45,6 +45,15 @@ class ContextManager:
     def get_user() -> str:
         """获取当前用户名"""
         return getpass.getuser()
+    
+    @staticmethod
+    def is_root_user() -> bool:
+        """检测当前用户是否为root用户"""
+        # 在Unix/Linux系统中，root用户的UID为0
+        # 在Windows系统中，不适用root概念
+        if platform.system() in ["Linux", "Darwin"]:
+            return os.getuid() == 0
+        return False
 
     @classmethod
     def get_full_context(cls) -> dict:
@@ -195,6 +204,9 @@ class ContextManager:
             info["kernel"] = platform.release()
             info["package_manager"] = ContextManager._detect_package_manager()
             
+            # 检查是否为root用户
+            info["is_root"] = ContextManager.is_root_user()
+            
             # 检查sudo权限（非阻塞）
             has_sudo = ContextManager._run_command_safe('sudo -n true 2>/dev/null && echo "yes" || echo "no"')
             info["has_sudo"] = has_sudo == "yes"
@@ -228,6 +240,7 @@ class ContextManager:
             kernel = detailed_info.get("kernel", "unknown")
             arch = detailed_info.get("architecture", "unknown")
             pkg_mgr = detailed_info.get("package_manager", "unknown")
+            is_root = detailed_info.get("is_root", False)
             
             lines.append(f"- OS: {distro}")
             lines.append(f"- Architecture: {arch}")
@@ -235,7 +248,9 @@ class ContextManager:
             lines.append(f"- Package Manager: {pkg_mgr}")
             lines.append(f"- Shell: {cls.get_shell_type()}")
             
-            if detailed_info.get("has_sudo"):
+            if is_root:
+                lines.append("- User Privilege: root (no sudo needed)")
+            elif detailed_info.get("has_sudo"):
                 lines.append("- Sudo Access: Available")
             
         elif os_type == "Windows":

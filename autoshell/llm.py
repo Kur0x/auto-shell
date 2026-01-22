@@ -125,7 +125,8 @@ Current Execution Environment:
 - For macOS with Homebrew (brew): use brew commands
 - Adjust command syntax and options based on the specific OS version and kernel
 - Consider the system architecture (x86_64/aarch64/armv7l) when suggesting installations
-- If sudo access is available, use it when necessary for system operations
+- **CRITICAL**: If the user is root (indicated by "User Privilege: root"), DO NOT use sudo in commands
+- If sudo access is available and user is NOT root, use sudo when necessary for system operations
 - Respect the package manager indicated in the environment
 
 ⚠️ CRITICAL JSON FORMAT REQUIREMENTS ⚠️
@@ -169,7 +170,7 @@ Example 1 - Simple command "show current directory":
    ]
 }}
 
-Example 2 - Package installation on Ubuntu:
+Example 2 - Package installation on Ubuntu (non-root user):
 {{
    "thought": "Install nginx using apt package manager on Ubuntu system",
    "steps": [
@@ -184,13 +185,13 @@ Example 2 - Package installation on Ubuntu:
    ]
 }}
 
-Example 3 - Package installation on CentOS 8:
+Example 3 - Package installation on CentOS 8 (root user):
 {{
-   "thought": "Install nginx using dnf package manager on CentOS 8 system",
+   "thought": "Install nginx using dnf package manager on CentOS 8 system as root user (no sudo needed)",
    "steps": [
       {{
          "description": "Install nginx",
-         "command": "sudo dnf install -y nginx"
+         "command": "dnf install -y nginx"
       }}
    ]
 }}
@@ -382,7 +383,8 @@ Current Execution Environment:
 - For macOS with Homebrew (brew): use brew commands
 - Adjust command syntax based on the specific OS version and package manager
 - Consider the system architecture when suggesting installations
-- If sudo access is available, use it when necessary
+- **CRITICAL**: If the user is root (indicated by "User Privilege: root"), DO NOT use sudo in commands
+- If sudo access is available and user is NOT root, use sudo when necessary
 
 ⚠️ CRITICAL JSON FORMAT REQUIREMENTS ⚠️
 
@@ -413,8 +415,8 @@ EXAMPLES OF GOOD COMMANDS:
 - Check output: if [ "$(cat file.txt)" = "1" ]; then echo "match"; fi
 - Edit file: sed -i 's/echo 1/echo 2/g' ~/test/a.sh
 - Conditional: [ "$(command)" = "expected" ] && next_command || alternative_command
-- Install package (Ubuntu): sudo apt install -y package_name
-- Install package (CentOS 8): sudo dnf install -y package_name
+- Install package (Ubuntu, non-root): sudo apt install -y package_name
+- Install package (CentOS 8, root): dnf install -y package_name
 
 Remember: Output ONLY the JSON object - absolutely nothing else!
 """

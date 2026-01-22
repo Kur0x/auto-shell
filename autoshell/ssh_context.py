@@ -279,6 +279,10 @@ class SSHContextManager:
             user = SSHContextManager._execute_ssh_command(client, "whoami")
             info['user'] = user or 'unknown'
             
+            # 检查是否为root用户
+            uid = SSHContextManager._execute_ssh_command(client, "id -u")
+            info['is_root'] = uid == '0'
+            
             # Home目录
             home = SSHContextManager._execute_ssh_command(client, "echo $HOME")
             info['home'] = home or '~'
@@ -325,6 +329,7 @@ class SSHContextManager:
         shell = info.get("shell", "bash")
         user = info.get("user", "unknown")
         hostname = info.get("hostname", "remote")
+        is_root = info.get("is_root", False)
         
         lines.append(f"- Remote OS: {distro}")
         lines.append(f"- Architecture: {arch}")
@@ -333,7 +338,9 @@ class SSHContextManager:
         lines.append(f"- Shell: {shell}")
         lines.append(f"- User: {user}@{hostname}")
         
-        if info.get("has_sudo"):
+        if is_root:
+            lines.append("- User Privilege: root (no sudo needed)")
+        elif info.get("has_sudo"):
             lines.append("- Sudo Access: Available")
         
         python_ver = info.get("python_version", "unknown")
