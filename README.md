@@ -119,17 +119,69 @@ python main.py --ssh-host vub --adaptive -c "检查nginx配置，如果有错误
 
 ## 配置
 
-### 环境变量
+### LLM 提供商
 
-在 `.env` 文件中配置：
+AutoShell 支持多种 LLM 提供商：
+
+#### 1. OpenAI API（默认）
 
 ```bash
-# LLM 配置（必需）
-OPENAI_API_KEY=your_api_key_here
+OPENAI_API_KEY=sk-xxx
 OPENAI_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-3.5-turbo
+```
 
-# 执行配置
+#### 2. Ollama（本地）⭐ 新增
+
+首先安装并启动 Ollama：
+
+```bash
+# 安装 Ollama (参考 https://ollama.ai)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# 拉取模型
+ollama pull qwen2.5:7b
+
+# 启动 Ollama 服务（通常自动启动）
+ollama serve
+```
+
+然后配置 AutoShell：
+
+```bash
+OPENAI_API_KEY=ollama  # 任意字符串
+OPENAI_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=qwen2.5:7b
+```
+
+**推荐模型**：
+- `qwen2.5:7b` - 通义千问 2.5（中文优秀）⭐ 推荐
+- `qwen2.5:14b` - 更强大，需要更多内存
+- `llama3.1:8b` - Meta Llama 3.1（英文优秀）
+- `mistral:7b` - Mistral AI（速度快）
+
+**Ollama 优势**：
+- 🚀 完全本地运行，数据不离开你的电脑
+- 💰 免费使用，无 API 调用费用
+- ⚡ 低延迟，响应更快
+- 🔒 隐私保护，敏感命令不会发送到云端
+
+详细设置指南：[plans/OLLAMA_SETUP.md](plans/OLLAMA_SETUP.md)
+
+#### 3. 其他兼容 API
+
+任何提供 OpenAI 兼容 API 的服务都可以使用：
+
+```bash
+OPENAI_API_KEY=your_key
+OPENAI_BASE_URL=https://your-endpoint.com/v1
+LLM_MODEL=your-model
+```
+
+### 执行配置
+
+```bash
+# 最大重试次数
 MAX_RETRIES=3
 ```
 
@@ -207,6 +259,7 @@ python main.py --adaptive -c "你的任务" 2>&1 | tee debug.log
 
 - [自适应执行模式](ADAPTIVE_MODE.md) - 详细使用指南
 - [SSH 使用指南](SSH_USAGE.md) - SSH 配置和使用
+- [Ollama 设置指南](plans/OLLAMA_SETUP.md) - 本地 LLM 配置 ⭐ 新增
 - [设计文档](plans/) - 架构设计和实现细节
 
 ## 常见问题

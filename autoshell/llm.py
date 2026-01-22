@@ -10,12 +10,18 @@ console = Console()
 class LLMClient:
     def __init__(self):
         Config.validate()
+        
+        # 检测提供商类型
+        self.is_ollama = Config.is_ollama()
+        provider_name = "Ollama (Local)" if self.is_ollama else "OpenAI Compatible"
+        
         console.print(f"[dim][DEBUG] Initializing LLM Client...[/dim]")
+        console.print(f"[dim][DEBUG] Provider: {provider_name}[/dim]")
         console.print(f"[dim][DEBUG] API Base URL: {Config.OPENAI_BASE_URL}[/dim]")
         console.print(f"[dim][DEBUG] Model: {Config.LLM_MODEL}[/dim]")
         
-        # 安全显示API Key（如果存在）
-        if Config.OPENAI_API_KEY:
+        # 安全显示API Key（如果存在且不是 Ollama）
+        if not self.is_ollama and Config.OPENAI_API_KEY and Config.OPENAI_API_KEY != "not-needed":
             masked_key = f"{Config.OPENAI_API_KEY[:10]}...{Config.OPENAI_API_KEY[-4:]}"
             console.print(f"[dim][DEBUG] API Key: {masked_key}[/dim]")
         
@@ -25,9 +31,9 @@ class LLMClient:
                 base_url=Config.OPENAI_BASE_URL,
                 timeout=30.0  # 添加30秒超时
             )
-            console.print(f"[dim][DEBUG] OpenAI client initialized successfully[/dim]")
+            console.print(f"[dim][DEBUG] Client initialized successfully[/dim]")
         except Exception as e:
-            console.print(f"[bold red][DEBUG] Failed to initialize OpenAI client: {str(e)}[/bold red]")
+            console.print(f"[bold red][DEBUG] Failed to initialize client: {str(e)}[/bold red]")
             raise
         
         self.model = Config.LLM_MODEL
@@ -206,29 +212,35 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
                 ],
             }
             
-            # 尝试使用JSON模式（如果模型支持）
-            # 首先尝试带JSON模式的请求
+            # 处理 JSON 模式
             response = None
-            json_mode_failed = False
             
-            try:
-                api_params["response_format"] = {"type": "json_object"}
-                console.print(f"[dim][DEBUG] Attempting to enable JSON mode for model: {self.model}[/dim]")
+            if self.is_ollama:
+                # Ollama: 不使用 JSON 模式，依赖 prompt engineering
+                console.print(f"[dim][DEBUG] Using Ollama, relying on prompt for JSON output[/dim]")
                 response = self.client.chat.completions.create(**api_params)
-            except Exception as e:
-                error_msg = str(e)
-                if "response_format" in error_msg or "400" in error_msg:
-                    console.print(f"[dim][DEBUG] JSON mode not supported by this API, retrying without it...[/dim]")
-                    json_mode_failed = True
-                else:
-                    # 其他错误，直接抛出
-                    raise
-            
-            # 如果JSON模式失败，重试不带JSON模式
-            if json_mode_failed:
-                api_params.pop("response_format", None)
-                console.print(f"[dim][DEBUG] Calling API without JSON mode...[/dim]")
-                response = self.client.chat.completions.create(**api_params)
+            else:
+                # 非 Ollama: 尝试使用 JSON 模式
+                json_mode_failed = False
+                
+                try:
+                    api_params["response_format"] = {"type": "json_object"}
+                    console.print(f"[dim][DEBUG] Attempting to enable JSON mode for model: {self.model}[/dim]")
+                    response = self.client.chat.completions.create(**api_params)
+                except Exception as e:
+                    error_msg = str(e)
+                    if "response_format" in error_msg or "400" in error_msg:
+                        console.print(f"[dim][DEBUG] JSON mode not supported by this API, retrying without it...[/dim]")
+                        json_mode_failed = True
+                    else:
+                        # 其他错误，直接抛出
+                        raise
+                
+                # 如果JSON模式失败，重试不带JSON模式
+                if json_mode_failed:
+                    api_params.pop("response_format", None)
+                    console.print(f"[dim][DEBUG] Calling API without JSON mode...[/dim]")
+                    response = self.client.chat.completions.create(**api_params)
             
             elapsed = time.time() - start_time
             console.print(f"[dim][DEBUG] LLM API responded in {elapsed:.2f}s[/dim]")
@@ -388,24 +400,31 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
                 "temperature": 0.5  # 稍低的温度以获得更确定的输出
             }
             
-            # 尝试使用JSON模式
+            # 处理 JSON 模式
             response = None
-            json_mode_failed = False
             
-            try:
-                api_params["response_format"] = {"type": "json_object"}
+            if self.is_ollama:
+                # Ollama: 直接调用
+                console.print(f"[dim][DEBUG] Using Ollama for adaptive execution[/dim]")
                 response = self.client.chat.completions.create(**api_params)
-            except Exception as e:
-                error_msg = str(e)
-                if "response_format" in error_msg or "400" in error_msg:
-                    console.print(f"[dim][DEBUG] JSON mode not supported, retrying without it...[/dim]")
-                    json_mode_failed = True
-                else:
-                    raise
-            
-            if json_mode_failed:
-                api_params.pop("response_format", None)
-                response = self.client.chat.completions.create(**api_params)
+            else:
+                # 非 Ollama: 尝试 JSON 模式
+                json_mode_failed = False
+                
+                try:
+                    api_params["response_format"] = {"type": "json_object"}
+                    response = self.client.chat.completions.create(**api_params)
+                except Exception as e:
+                    error_msg = str(e)
+                    if "response_format" in error_msg or "400" in error_msg:
+                        console.print(f"[dim][DEBUG] JSON mode not supported, retrying without it...[/dim]")
+                        json_mode_failed = True
+                    else:
+                        raise
+                
+                if json_mode_failed:
+                    api_params.pop("response_format", None)
+                    response = self.client.chat.completions.create(**api_params)
             
             elapsed = time.time() - start_time
             console.print(f"[dim][DEBUG] LLM API responded in {elapsed:.2f}s[/dim]")
