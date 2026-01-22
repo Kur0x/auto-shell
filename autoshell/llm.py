@@ -15,13 +15,14 @@ class LLMClient:
         self.is_ollama = Config.is_ollama()
         provider_name = "Ollama (Local)" if self.is_ollama else "OpenAI Compatible"
         
-        console.print(f"[dim][DEBUG] Initializing LLM Client...[/dim]")
-        console.print(f"[dim][DEBUG] Provider: {provider_name}[/dim]")
-        console.print(f"[dim][DEBUG] API Base URL: {Config.OPENAI_BASE_URL}[/dim]")
-        console.print(f"[dim][DEBUG] Model: {Config.LLM_MODEL}[/dim]")
+        if Config.DEBUG:
+            console.print(f"[dim][DEBUG] Initializing LLM Client...[/dim]")
+            console.print(f"[dim][DEBUG] Provider: {provider_name}[/dim]")
+            console.print(f"[dim][DEBUG] API Base URL: {Config.OPENAI_BASE_URL}[/dim]")
+            console.print(f"[dim][DEBUG] Model: {Config.LLM_MODEL}[/dim]")
         
         # 安全显示API Key（如果存在且不是 Ollama）
-        if not self.is_ollama and Config.OPENAI_API_KEY and Config.OPENAI_API_KEY != "not-needed":
+        if Config.DEBUG and not self.is_ollama and Config.OPENAI_API_KEY and Config.OPENAI_API_KEY != "not-needed":
             masked_key = f"{Config.OPENAI_API_KEY[:10]}...{Config.OPENAI_API_KEY[-4:]}"
             console.print(f"[dim][DEBUG] API Key: {masked_key}[/dim]")
         
@@ -31,9 +32,10 @@ class LLMClient:
                 base_url=Config.OPENAI_BASE_URL,
                 timeout=30.0  # 添加30秒超时
             )
-            console.print(f"[dim][DEBUG] Client initialized successfully[/dim]")
+            if Config.DEBUG:
+                console.print(f"[dim][DEBUG] Client initialized successfully[/dim]")
         except Exception as e:
-            console.print(f"[bold red][DEBUG] Failed to initialize client: {str(e)}[/bold red]")
+            console.print(f"[bold red][ERROR] Failed to initialize client: {str(e)}[/bold red]")
             raise
         
         self.model = Config.LLM_MODEL
@@ -104,7 +106,8 @@ class LLMClient:
         :return: 解析后的 JSON 字典 {"thought": ..., "steps": [{"description":..., "command":...}, ...]}
         """
         
-        console.print(f"[dim][DEBUG] Starting plan generation for query: {user_query[:50]}...[/dim]")
+        if Config.DEBUG:
+            console.print(f"[dim][DEBUG] Starting plan generation for query: {user_query[:50]}...[/dim]")
         start_time = time.time()
         
         system_prompt = f"""
@@ -201,7 +204,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
         raw_content = None  # 初始化变量以避免未绑定警告
         
         try:
-            console.print(f"[dim][DEBUG] Calling LLM API with model: {self.model}[/dim]")
+            if Config.DEBUG:
+                console.print(f"[dim][DEBUG] Calling LLM API with model: {self.model}[/dim]")
             
             # 构建API调用参数
             api_params = {
@@ -217,7 +221,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
             
             if self.is_ollama:
                 # Ollama: 不使用 JSON 模式，依赖 prompt engineering
-                console.print(f"[dim][DEBUG] Using Ollama, relying on prompt for JSON output[/dim]")
+                if Config.DEBUG:
+                    console.print(f"[dim][DEBUG] Using Ollama, relying on prompt for JSON output[/dim]")
                 response = self.client.chat.completions.create(**api_params)
             else:
                 # 非 Ollama: 尝试使用 JSON 模式
@@ -225,12 +230,14 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
                 
                 try:
                     api_params["response_format"] = {"type": "json_object"}
-                    console.print(f"[dim][DEBUG] Attempting to enable JSON mode for model: {self.model}[/dim]")
+                    if Config.DEBUG:
+                        console.print(f"[dim][DEBUG] Attempting to enable JSON mode for model: {self.model}[/dim]")
                     response = self.client.chat.completions.create(**api_params)
                 except Exception as e:
                     error_msg = str(e)
                     if "response_format" in error_msg or "400" in error_msg:
-                        console.print(f"[dim][DEBUG] JSON mode not supported by this API, retrying without it...[/dim]")
+                        if Config.DEBUG:
+                            console.print(f"[dim][DEBUG] JSON mode not supported by this API, retrying without it...[/dim]")
                         json_mode_failed = True
                     else:
                         # 其他错误，直接抛出
@@ -239,11 +246,13 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
                 # 如果JSON模式失败，重试不带JSON模式
                 if json_mode_failed:
                     api_params.pop("response_format", None)
-                    console.print(f"[dim][DEBUG] Calling API without JSON mode...[/dim]")
+                    if Config.DEBUG:
+                        console.print(f"[dim][DEBUG] Calling API without JSON mode...[/dim]")
                     response = self.client.chat.completions.create(**api_params)
             
             elapsed = time.time() - start_time
-            console.print(f"[dim][DEBUG] LLM API responded in {elapsed:.2f}s[/dim]")
+            if Config.DEBUG:
+                console.print(f"[dim][DEBUG] LLM API responded in {elapsed:.2f}s[/dim]")
             
             # 确保response不为None
             if response is None:
@@ -252,7 +261,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
             raw_content = response.choices[0].message.content
             
             if not raw_content:
-                console.print(f"[bold red][DEBUG] WARNING: LLM returned None or empty content![/bold red]")
+                if Config.DEBUG:
+                    console.print(f"[bold red][DEBUG] WARNING: LLM returned None or empty content![/bold red]")
                 raise ValueError("LLM returned empty response")
             
             # 只在出错时显示详细日志
@@ -298,14 +308,16 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
             return result
             
         except json.JSONDecodeError as e:
-            console.print(f"[bold red][DEBUG] JSON Parse Error: {str(e)}[/bold red]")
-            console.print(f"[dim][DEBUG] Raw content: {raw_content or 'N/A'}[/dim]")
+            if Config.DEBUG:
+                console.print(f"[bold red][DEBUG] JSON Parse Error: {str(e)}[/bold red]")
+                console.print(f"[dim][DEBUG] Raw content: {raw_content or 'N/A'}[/dim]")
             raise ValueError(f"LLM returned invalid JSON: {str(e)}")
         except Exception as e:
             elapsed = time.time() - start_time
-            console.print(f"[bold red][DEBUG] LLM API Error after {elapsed:.2f}s: {type(e).__name__}: {str(e)}[/bold red]")
-            import traceback
-            console.print(f"[dim][DEBUG] Traceback:\n{traceback.format_exc()}[/dim]")
+            if Config.DEBUG:
+                console.print(f"[bold red][DEBUG] LLM API Error after {elapsed:.2f}s: {type(e).__name__}: {str(e)}[/bold red]")
+                import traceback
+                console.print(f"[dim][DEBUG] Traceback:\n{traceback.format_exc()}[/dim]")
             raise RuntimeError(f"LLM API Error: {str(e)}")
     
     def generate_next_steps(
@@ -325,7 +337,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
         :return: {"thought": ..., "steps": [...], "is_complete": bool}
         """
         
-        console.print(f"[dim][DEBUG] Generating next steps (max: {max_steps})...[/dim]")
+        if Config.DEBUG:
+            console.print(f"[dim][DEBUG] Generating next steps (max: {max_steps})...[/dim]")
         start_time = time.time()
         
         # 构建执行历史摘要
@@ -389,7 +402,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
         raw_content = None
         
         try:
-            console.print(f"[dim][DEBUG] Calling LLM API for next steps...[/dim]")
+            if Config.DEBUG:
+                console.print(f"[dim][DEBUG] Calling LLM API for next steps...[/dim]")
             
             api_params = {
                 "model": self.model,
@@ -405,7 +419,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
             
             if self.is_ollama:
                 # Ollama: 直接调用
-                console.print(f"[dim][DEBUG] Using Ollama for adaptive execution[/dim]")
+                if Config.DEBUG:
+                    console.print(f"[dim][DEBUG] Using Ollama for adaptive execution[/dim]")
                 response = self.client.chat.completions.create(**api_params)
             else:
                 # 非 Ollama: 尝试 JSON 模式
@@ -417,7 +432,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
                 except Exception as e:
                     error_msg = str(e)
                     if "response_format" in error_msg or "400" in error_msg:
-                        console.print(f"[dim][DEBUG] JSON mode not supported, retrying without it...[/dim]")
+                        if Config.DEBUG:
+                            console.print(f"[dim][DEBUG] JSON mode not supported, retrying without it...[/dim]")
                         json_mode_failed = True
                     else:
                         raise
@@ -427,7 +443,8 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
                     response = self.client.chat.completions.create(**api_params)
             
             elapsed = time.time() - start_time
-            console.print(f"[dim][DEBUG] LLM API responded in {elapsed:.2f}s[/dim]")
+            if Config.DEBUG:
+                console.print(f"[dim][DEBUG] LLM API responded in {elapsed:.2f}s[/dim]")
             
             if response is None:
                 raise RuntimeError("API call succeeded but response is None")
@@ -464,14 +481,16 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
             return result
             
         except json.JSONDecodeError as e:
-            console.print(f"[bold red][DEBUG] JSON Parse Error: {str(e)}[/bold red]")
-            console.print(f"[dim][DEBUG] Raw content: {raw_content or 'N/A'}[/dim]")
+            if Config.DEBUG:
+                console.print(f"[bold red][DEBUG] JSON Parse Error: {str(e)}[/bold red]")
+                console.print(f"[dim][DEBUG] Raw content: {raw_content or 'N/A'}[/dim]")
             raise ValueError(f"LLM returned invalid JSON: {str(e)}")
         except Exception as e:
             elapsed = time.time() - start_time
-            console.print(f"[bold red][DEBUG] LLM API Error after {elapsed:.2f}s: {type(e).__name__}: {str(e)}[/bold red]")
-            import traceback
-            console.print(f"[dim][DEBUG] Traceback:\n{traceback.format_exc()}[/dim]")
+            if Config.DEBUG:
+                console.print(f"[bold red][DEBUG] LLM API Error after {elapsed:.2f}s: {type(e).__name__}: {str(e)}[/bold red]")
+                import traceback
+                console.print(f"[dim][DEBUG] Traceback:\n{traceback.format_exc()}[/dim]")
             raise RuntimeError(f"LLM API Error: {str(e)}")
     
     def _build_history_summary(self, execution_history: list) -> str:

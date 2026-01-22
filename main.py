@@ -5,6 +5,7 @@ from rich.console import Console
 from rich.panel import Panel
 from autoshell.agent import AutoShellAgent
 from autoshell.context import ContextManager
+from autoshell.config import Config
 
 # 设置标准输出编码为UTF-8，避免Windows下的编码问题
 if sys.platform == 'win32':
@@ -82,11 +83,20 @@ Examples:
         help='启用自适应执行模式（根据输出动态生成下一步）'
     )
     
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='启用调试输出模式'
+    )
+    
     return parser.parse_args()
 
 def main():
     try:
         args = parse_args()
+        
+        # 设置全局DEBUG标志
+        Config.DEBUG = args.debug
         
         # 判断是否为SSH模式
         ssh_config = None
@@ -136,7 +146,7 @@ def main():
                 if not user_input:
                     continue
                     
-                if user_input.lower() in ["exit", "quit"]:
+                if user_input.lower() in ["exit", "quit", "q"]:
                     console.print("[bold green]Goodbye![/bold green]")
                     break
 

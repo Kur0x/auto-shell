@@ -81,6 +81,24 @@ python main.py --ssh-host user@example.com --ssh-key ~/.ssh/id_rsa -c "重启服
 
 详细文档：[SSH_USAGE.md](SSH_USAGE.md)
 
+#### 4. 调试模式
+
+默认情况下，AutoShell 不显示调试信息。如需查看详细的执行日志，可以使用 `--debug` 参数：
+
+```bash
+# 启用调试输出
+python main.py --debug -c "列出当前目录"
+
+# 调试模式 + 自适应模式
+python main.py --debug --adaptive -c "执行复杂任务"
+```
+
+**调试模式会显示**：
+- LLM 客户端初始化信息
+- API 调用详情和响应时间
+- JSON 解析过程
+- 错误堆栈跟踪
+
 ## 使用示例
 
 ### 示例 1：简单任务（传统模式）
@@ -198,6 +216,7 @@ python main.py --help
 --ssh-port             # SSH 端口（默认22）
 --ssh-key              # SSH 私钥路径
 --ssh-password         # SSH 密码（不推荐）
+--debug                # 启用调试输出模式
 ```
 
 ## 模式对比

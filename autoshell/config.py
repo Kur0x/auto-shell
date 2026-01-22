@@ -6,9 +6,9 @@ console = Console()
 
 # Load environment variables from .env file if it exists
 env_loaded = load_dotenv()
-console.print(f"[dim][DEBUG] .env file loaded: {env_loaded}[/dim]")
 
 class Config:
+    DEBUG = False  # 默认关闭debug输出，通过命令行参数--debug启用
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "not-needed")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     LLM_MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
@@ -26,17 +26,19 @@ class Config:
 
     @staticmethod
     def validate():
-        console.print(f"[dim][DEBUG] Validating configuration...[/dim]")
+        if Config.DEBUG:
+            console.print(f"[dim][DEBUG] Validating configuration...[/dim]")
         
         # 检测提供商类型
         is_ollama = Config.is_ollama()
         provider_name = "Ollama (Local)" if is_ollama else "OpenAI Compatible"
         
-        console.print(f"[dim][DEBUG] LLM Provider: {provider_name}[/dim]")
-        console.print(f"[dim][DEBUG] OPENAI_API_KEY exists: {bool(Config.OPENAI_API_KEY)}[/dim]")
-        console.print(f"[dim][DEBUG] OPENAI_BASE_URL: {Config.OPENAI_BASE_URL}[/dim]")
-        console.print(f"[dim][DEBUG] LLM_MODEL: {Config.LLM_MODEL}[/dim]")
-        console.print(f"[dim][DEBUG] MAX_RETRIES: {Config.MAX_RETRIES}[/dim]")
+        if Config.DEBUG:
+            console.print(f"[dim][DEBUG] LLM Provider: {provider_name}[/dim]")
+            console.print(f"[dim][DEBUG] OPENAI_API_KEY exists: {bool(Config.OPENAI_API_KEY)}[/dim]")
+            console.print(f"[dim][DEBUG] OPENAI_BASE_URL: {Config.OPENAI_BASE_URL}[/dim]")
+            console.print(f"[dim][DEBUG] LLM_MODEL: {Config.LLM_MODEL}[/dim]")
+            console.print(f"[dim][DEBUG] MAX_RETRIES: {Config.MAX_RETRIES}[/dim]")
         
         # 只对非 Ollama 提供商验证 API Key
         if not is_ollama and not Config.OPENAI_API_KEY:
@@ -46,4 +48,5 @@ class Config:
                 "For Ollama, set OPENAI_BASE_URL to http://localhost:11434/v1"
             )
         
-        console.print(f"[dim][DEBUG] Configuration validated successfully[/dim]")
+        if Config.DEBUG:
+            console.print(f"[dim][DEBUG] Configuration validated successfully[/dim]")
