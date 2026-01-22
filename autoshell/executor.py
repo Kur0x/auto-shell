@@ -1,6 +1,7 @@
 import subprocess
 import shlex
 import os
+import time
 from typing import Optional, Dict, Any
 from rich.console import Console
 from rich.prompt import Confirm
@@ -21,10 +22,10 @@ class CommandExecutor:
     # 不可变白名单 (扩充)
     WHITELIST = {
         "ls", "dir", "pwd", "echo", "date", "whoami", "hostname", "uname", "cd",
-        "mkdir", "touch", "cat", "type", "cp", "mv", "rm", "grep", "find", "head", "tail",
+        "mkdir", "touch", "cat", "type", "cp", "grep", "find", "head", "tail",
         "df", "du", "sort", "wc", "ps", "top", "free", "uptime", "netstat", "ss",
         "systemctl", "service", "journalctl", "dmesg", "lsof", "which", "whereis",
-        "sudo", "xargs", "awk", "sed"
+        "sudo", "xargs", "awk", "sed", "sleep"
     }
 
     @classmethod
@@ -88,7 +89,7 @@ class CommandExecutor:
             syntax = Syntax(command, "bash", theme="monokai", line_numbers=False)
             console.print(Panel(syntax, title="[bold red]Review Safe-Check[/bold red]", expand=False, border_style="red"))
             
-            if not Confirm.ask("[bold red]Command not in whitelist. Execute?[/bold red]", default=False):
+            if not Confirm.ask("[bold red]Command not in whitelist. Execute?[/bold red]", default=True):
                 return {"return_code": -1, "stdout": "", "stderr": "User aborted execution.", "executed": False}
 
         try:
@@ -172,7 +173,7 @@ class CommandExecutor:
             syntax = Syntax(command, "bash", theme="monokai", line_numbers=False)
             console.print(Panel(syntax, title="[bold red]Review Safe-Check (SSH)[/bold red]", expand=False, border_style="red"))
             
-            if not Confirm.ask(f"[bold red]Execute on {hostname}?[/bold red]", default=False):
+            if not Confirm.ask(f"[bold red]Execute on {hostname}?[/bold red]", default=True):
                 return {"return_code": -1, "stdout": "", "stderr": "User aborted execution.", "executed": False}
         
         try:
@@ -222,23 +223,99 @@ class CommandExecutor:
             if cwd:
                 command = f"cd {cwd} && {command}"
             
-            # 执行命令
-            stdin, stdout, stderr = client.exec_command(command)
+            # 使用PTY执行命令，支持信号传递和中断
+            stdin, stdout, stderr = client.exec_command(
+                command,
+                get_pty=True  # 关键：分配伪终端，支持信号传递
+            )
             
-            # 获取输出
-            stdout_str = stdout.read().decode('utf-8')
-            stderr_str = stderr.read().decode('utf-8')
-            return_code = stdout.channel.recv_exit_status()
+            # 设置channel为非阻塞模式
+            stdout.channel.setblocking(0)
             
-            # 关闭连接
-            client.close()
+            stdout_data = []
+            stderr_data = []
             
-            return {
-                "return_code": return_code,
-                "stdout": stdout_str,
-                "stderr": stderr_str,
-                "executed": True
-            }
+            try:
+                # 非阻塞读取输出，可以响应KeyboardInterrupt
+                while not stdout.channel.exit_status_ready():
+                    # 检查是否有标准输出数据
+                    if stdout.channel.recv_ready():
+                        data = stdout.channel.recv(4096)
+                        stdout_data.append(data.decode('utf-8', errors='replace'))
+                    
+                    # 检查是否有标准错误数据
+                    if stdout.channel.recv_stderr_ready():
+                        data = stdout.channel.recv_stderr(4096)
+                        stderr_data.append(data.decode('utf-8', errors='replace'))
+                    
+                    # 短暂休眠，避免CPU占用过高
+                    time.sleep(0.1)
+                
+                # 读取剩余数据
+                while stdout.channel.recv_ready():
+                    data = stdout.channel.recv(4096)
+                    stdout_data.append(data.decode('utf-8', errors='replace'))
+                
+                while stdout.channel.recv_stderr_ready():
+                    data = stdout.channel.recv_stderr(4096)
+                    stderr_data.append(data.decode('utf-8', errors='replace'))
+                
+                # 获取退出状态
+                return_code = stdout.channel.recv_exit_status()
+                
+                # 关闭连接
+                client.close()
+                
+                return {
+                    "return_code": return_code,
+                    "stdout": ''.join(stdout_data),
+                    "stderr": ''.join(stderr_data),
+                    "executed": True
+                }
+                
+            except KeyboardInterrupt:
+                # 用户按下Ctrl+C，发送中断信号到远程进程
+                console.print("\n[yellow]Sending interrupt signal to remote process...[/yellow]")
+                
+                try:
+                    # 发送Ctrl+C (ASCII 3) 到远程进程
+                    stdout.channel.send(b'\x03')
+                    
+                    # 等待一小段时间让进程响应
+                    time.sleep(0.5)
+                    
+                    # 如果进程还在运行，再次发送中断信号
+                    if not stdout.channel.exit_status_ready():
+                        stdout.channel.send(b'\x03')
+                        time.sleep(0.5)
+                    
+                    # 读取已有输出
+                    while stdout.channel.recv_ready():
+                        data = stdout.channel.recv(4096)
+                        stdout_data.append(data.decode('utf-8', errors='replace'))
+                    
+                    while stdout.channel.recv_stderr_ready():
+                        data = stdout.channel.recv_stderr(4096)
+                        stderr_data.append(data.decode('utf-8', errors='replace'))
+                    
+                except Exception as e:
+                    # 忽略发送中断信号时的错误
+                    pass
+                
+                # 关闭连接
+                try:
+                    stdout.channel.close()
+                except:
+                    pass
+                
+                client.close()
+                
+                return {
+                    "return_code": -1,
+                    "stdout": ''.join(stdout_data),
+                    "stderr": "Command interrupted by user (Ctrl+C)",
+                    "executed": True
+                }
             
         except Exception as e:
             return {
