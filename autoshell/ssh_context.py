@@ -20,6 +20,108 @@ class SSHContextManager:
     """SSH模式下的远程系统信息收集"""
     
     @staticmethod
+    def test_connection(ssh_config: Dict[str, Any], timeout: int = 10) -> tuple[bool, str]:
+        """
+        测试SSH连接是否可用
+        
+        :param ssh_config: SSH配置字典
+        :param timeout: 连接超时时间（秒）
+        :return: (是否成功, 错误信息或成功消息)
+        """
+        if not SSH_AVAILABLE:
+            return False, "paramiko not installed. Please install it: pip install paramiko"
+        
+        try:
+            # 解析SSH配置
+            host_str = ssh_config.get('host', '')
+            if '@' in host_str:
+                username, hostname = host_str.split('@', 1)
+            else:
+                username = None
+                hostname = host_str
+            
+            if not hostname:
+                return False, "Invalid SSH host configuration"
+            
+            port = ssh_config.get('port', 22)
+            password = ssh_config.get('password')
+            key_filename = ssh_config.get('key_filename')
+            
+            # 创建SSH客户端
+            client = paramiko.SSHClient()  # type: ignore
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # type: ignore
+            
+            # 加载SSH配置文件
+            ssh_config_obj = paramiko.SSHConfig()  # type: ignore
+            ssh_config_path = os.path.expanduser('~/.ssh/config')
+            if os.path.exists(ssh_config_path):
+                try:
+                    with open(ssh_config_path) as f:
+                        ssh_config_obj.parse(f)
+                    
+                    # 查找主机配置
+                    host_config = ssh_config_obj.lookup(hostname)
+                    
+                    # 从配置文件获取实际的主机名和其他参数
+                    hostname = host_config.get('hostname', hostname)
+                    if not username and 'user' in host_config:
+                        username = host_config['user']
+                    if not key_filename and 'identityfile' in host_config:
+                        key_filename = host_config['identityfile'][0] if isinstance(host_config['identityfile'], list) else host_config['identityfile']
+                    if 'port' in host_config:
+                        port = int(host_config['port'])
+                except Exception as e:
+                    if Config.DEBUG:
+                        console.print(f"[dim][DEBUG] Failed to parse SSH config: {e}[/dim]")
+            
+            # 连接参数
+            connect_kwargs = {
+                'hostname': hostname,
+                'port': port,
+                'timeout': timeout
+            }
+            
+            if username:
+                connect_kwargs['username'] = username
+            
+            if key_filename:
+                key_filename = os.path.expanduser(key_filename)
+                if not os.path.exists(key_filename):
+                    return False, f"SSH key file not found: {key_filename}"
+                connect_kwargs['key_filename'] = key_filename
+            elif password:
+                connect_kwargs['password'] = password
+            elif not username:
+                return False, "No authentication method provided (username, password, or key)"
+            
+            # 尝试连接
+            try:
+                client.connect(**connect_kwargs)
+                
+                # 执行简单命令测试连接
+                stdin, stdout, stderr = client.exec_command("echo 'connection_test'", timeout=5)
+                output = stdout.read().decode('utf-8').strip()
+                
+                client.close()
+                
+                if output == 'connection_test':
+                    return True, f"Successfully connected to {username}@{hostname}:{port}"
+                else:
+                    return False, "Connection established but command execution failed"
+                    
+            except paramiko.AuthenticationException:  # type: ignore
+                return False, f"Authentication failed for {username}@{hostname}:{port}"
+            except paramiko.SSHException as e:  # type: ignore
+                return False, f"SSH error: {str(e)}"
+            except TimeoutError:
+                return False, f"Connection timeout to {hostname}:{port}"
+            except Exception as e:
+                return False, f"Connection failed: {str(e)}"
+                
+        except Exception as e:
+            return False, f"Failed to initialize SSH connection: {str(e)}"
+    
+    @staticmethod
     def _execute_ssh_command(ssh_client, command: str, timeout: int = 5) -> str:
         """通过SSH执行命令并返回输出"""
         try:

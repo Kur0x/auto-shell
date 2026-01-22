@@ -121,7 +121,14 @@ def main():
                 border_style="blue"
             ))
 
-        agent = AutoShellAgent(ssh_config=ssh_config)
+        # 初始化Agent（SSH模式下会先测试连接）
+        try:
+            agent = AutoShellAgent(ssh_config=ssh_config)
+        except ConnectionError as e:
+            # SSH连接失败，直接退出
+            console.print(f"\n[bold red]Error:[/bold red] Unable to establish SSH connection.")
+            console.print(f"[yellow]Please check your SSH configuration and try again.[/yellow]")
+            sys.exit(1)
         
         # 显示当前上下文（使用增强的信息）
         if ssh_config:

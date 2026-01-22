@@ -38,7 +38,19 @@ class AutoShellAgent:
         """初始化系统信息"""
         try:
             if self.ssh_config:
-                # SSH模式：收集远程信息
+                # SSH模式：先测试连接
+                with console.status("[bold green]Testing SSH connection...[/bold green]", spinner="dots"):
+                    success, message = SSHContextManager.test_connection(self.ssh_config)
+                
+                if not success:
+                    # 连接失败，直接抛出异常退出
+                    console.print(f"[bold red]SSH Connection Failed:[/bold red] {message}")
+                    raise ConnectionError(f"SSH connection failed: {message}")
+                
+                # 连接成功，显示消息
+                console.print(f"[green]✓[/green] {message}")
+                
+                # 收集远程信息
                 with console.status("[bold green]Collecting remote system info...[/bold green]", spinner="dots"):
                     self._system_info_cache = SSHContextManager.get_remote_system_info(self.ssh_config)
             else:
@@ -49,6 +61,9 @@ class AutoShellAgent:
             
             if Config.DEBUG:
                 console.print(f"[dim][DEBUG] System info collected: {self._system_info_cache}[/dim]")
+        except ConnectionError:
+            # SSH连接错误，直接向上抛出
+            raise
         except Exception as e:
             console.print(f"[yellow]Warning: Failed to collect system info: {e}[/yellow]")
             self._system_info_cache = None
