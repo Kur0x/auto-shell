@@ -285,24 +285,26 @@ class AutoShellAgent:
 
     def run_adaptive(self, user_query: str):
         """
-        自适应执行模式：渐进式生成和执行步骤，根据输出动态调整
+        增强的自适应执行模式：
+        - 多阶段任务规划
+        - 智能错误恢复和重试
+        - 结构化的执行上下文管理
         """
+        from .adaptive_context import AdaptiveExecutionContext, ExecutionStep, StepStatus
+        from .task_planner import TaskPlanner
+        from .error_recovery import ErrorRecoveryManager, RecoveryStrategy
+        
         console.print(Panel.fit(
-            "[bold blue]自适应执行模式[/bold blue]\n"
-            "AI 将根据执行结果动态生成下一步操作",
-            title="Adaptive Mode",
+            "[bold blue]增强自适应执行模式[/bold blue]\n"
+            "✓ 多阶段任务规划\n"
+            "✓ 智能错误恢复\n"
+            "✓ 动态步骤生成",
+            title="Enhanced Adaptive Mode",
             border_style="blue"
         ))
         
-        # 初始化
-        execution_history = []
-        max_iterations = 50  # 防止无限循环
-        iteration = 0
-        is_complete = False
-        
-        # 获取上下文 - 使用增强的上下文信息
+        # 获取系统上下文
         system_info = self._get_system_info()
-        
         if self.ssh_config:
             context_str = SSHContextManager.format_remote_context(system_info)
             session_cwd = None
@@ -311,168 +313,202 @@ class AutoShellAgent:
             session_cwd = os.getcwd()
         context_str += f"\n- Virtual Session CWD: {session_cwd}"
         
-        # 添加用户上下文文件
+        # 用户上下文
         user_context = ""
         if self.context_files:
             from .context_file import ContextFileManager
             user_context = ContextFileManager.format_context_string(self.context_files)
         
-        console.print(f"[bold cyan]目标:[/bold cyan] {user_query}\n")
+        # 初始化组件
+        planner = TaskPlanner(self.llm)
+        error_manager = ErrorRecoveryManager(max_retries=Config.MAX_RETRIES)
+        
+        # 生成任务计划
+        console.print(f"\n[bold cyan]目标:[/bold cyan] {user_query}\n")
+        try:
+            exec_context = planner.analyze_and_plan(user_query, context_str, user_context)
+        except Exception as e:
+            console.print(f"[red]任务规划失败: {e}[/red]")
+            return
         
         # 执行循环
-        while not is_complete and iteration < max_iterations:
+        max_iterations = 50
+        iteration = 0
+        
+        while not planner.is_plan_complete() and iteration < max_iterations:
             iteration += 1
-            console.print(f"\n[bold magenta]═══ 迭代 {iteration} ═══[/bold magenta]")
             
-            # 生成下一步
+            # 获取下一个可执行的阶段
+            current_phase = planner.get_next_executable_phase()
+            if not current_phase:
+                console.print("[yellow]没有可执行的阶段[/yellow]")
+                break
+            
+            console.print(f"\n[bold magenta]═══ 阶段 {current_phase.phase_id}: {current_phase.name} ═══[/bold magenta]")
+            console.print(f"[dim]目标: {current_phase.goal}[/dim]\n")
+            
+            # 设置当前阶段
+            exec_context.set_current_phase(current_phase)
+            
+            # 生成阶段的步骤
             try:
-                with console.status("[bold green]AI 正在思考下一步...[/bold green]", spinner="dots"):
+                with console.status("[bold green]生成执行步骤...[/bold green]", spinner="dots"):
                     next_plan = self.llm.generate_next_steps(
-                        user_goal=user_query,
-                        context_str=context_str,
-                        execution_history=execution_history,
+                        user_goal=current_phase.goal,
+                        context_str=context_str + "\n\n" + exec_context.get_context_summary(max_steps=5),
+                        execution_history=[],  # 使用新的上下文管理
                         max_steps=3,
                         user_context=user_context
                     )
             except Exception as e:
-                console.print(f"[bold red]生成步骤失败:[/bold red] {str(e)}")
-                break
+                console.print(f"[red]生成步骤失败: {e}[/red]")
+                exec_context.complete_current_phase(success=False)
+                continue
             
             thought = next_plan.get("thought", "")
             steps = next_plan.get("steps", [])
-            is_complete = next_plan.get("is_complete", False)
             
             if not steps:
-                console.print("[yellow]没有更多步骤，任务可能已完成[/yellow]")
-                break
+                console.print("[yellow]没有生成步骤[/yellow]")
+                exec_context.complete_current_phase(success=False)
+                continue
             
-            # 显示思考过程
+            # 显示思考和计划
             if thought:
-                console.print(Panel(f"[italic]{thought}[/italic]", title="AI 思考", border_style="blue"))
-            
-            # 显示计划
+                console.print(Panel(f"[italic]{thought}[/italic]", title="AI 分析", border_style="blue"))
             self._print_plan_table(steps)
             
             # 执行步骤
-            for i, step in enumerate(steps):
-                description = step.get("description", "No description")
-                command = step.get("command", "")
+            phase_success = True
+            for i, step_data in enumerate(steps):
+                description = step_data.get("description", "No description")
+                command = step_data.get("command", "")
                 
                 console.print(f"\n[bold cyan]步骤 {i+1}/{len(steps)}:[/bold cyan] {description}")
                 console.print(f"[dim]命令: {command}[/dim]")
-                console.print(f"[dim]工作目录: {session_cwd}[/dim]")
                 
-                # 检查是否是纯 CD 命令
-                # 只有不包含 &&、||、; 等操作符的纯 cd 命令才进行特殊处理
-                is_pure_cd = False
-                tokens = []
-                if not any(op in command for op in ["&&", "||", ";", "|"]):
-                    use_posix = os.name != 'nt'
-                    try:
-                        tokens = shlex.split(command, posix=use_posix)
-                    except ValueError:
-                        tokens = command.split()
+                # 执行命令（带重试）
+                retry_count = 0
+                step_success = False
+                current_command = command
+                
+                while retry_count <= Config.MAX_RETRIES:
+                    # 执行命令
+                    result = CommandExecutor.execute(
+                        current_command,
+                        cwd=session_cwd,
+                        description=description,
+                        ssh_config=self.ssh_config
+                    )
                     
-                    if tokens and tokens[0] == "cd":
-                        is_pure_cd = True
-                
-                if is_pure_cd:
-                    # 处理纯 CD 命令
-                    if self.ssh_config:
-                        target_dir = tokens[1] if len(tokens) > 1 else "~"
-                        if session_cwd and target_dir.startswith('/'):
-                            session_cwd = target_dir
-                        elif session_cwd:
-                            session_cwd = f"{session_cwd}/{target_dir}" if session_cwd != "~" else target_dir
-                        else:
-                            session_cwd = target_dir
-                        console.print(f"[green]✓ 切换目录到: {session_cwd}[/green]")
-                        
-                        # 记录到历史
-                        execution_history.append({
-                            "description": description,
-                            "command": command,
-                            "output": f"Changed directory to {session_cwd}",
-                            "success": True
-                        })
-                        continue
+                    if not result["executed"]:
+                        console.print("[yellow]用户取消执行[/yellow]")
+                        return
+                    
+                    # 创建执行步骤记录
+                    exec_step = ExecutionStep(
+                        description=description,
+                        command=current_command,
+                        output=result["stdout"] if result["return_code"] == 0 else result["stderr"],
+                        success=result["return_code"] == 0,
+                        status=StepStatus.SUCCESS if result["return_code"] == 0 else StepStatus.FAILED,
+                        error_message=result["stderr"] if result["return_code"] != 0 else None,
+                        retry_count=retry_count
+                    )
+                    
+                    # 添加到上下文
+                    exec_context.add_step_to_current_phase(exec_step)
+                    error_manager.record_execution_result(exec_step.success)
+                    
+                    if exec_step.success:
+                        console.print(f"[green]✓ 成功[/green]")
+                        if result["stdout"].strip():
+                            output_preview = result["stdout"][:500]
+                            if len(result["stdout"]) > 500:
+                                output_preview += "\n... (输出已截断)"
+                            console.print(Panel(output_preview, title="输出", border_style="green", expand=False))
+                        step_success = True
+                        break
                     else:
-                        target_dir = tokens[1] if len(tokens) > 1 else "~"
-                        if target_dir == "~":
-                            target_dir = os.path.expanduser("~")
-                        new_cwd = os.path.abspath(os.path.join(session_cwd or os.getcwd(), target_dir))
+                        # 失败 - 分析错误
+                        console.print(f"[red]✗ 失败 (尝试 {retry_count + 1}/{Config.MAX_RETRIES + 1})[/red]")
+                        error_msg = result["stderr"] or result["stdout"]
+                        console.print(Panel(error_msg, title="错误", border_style="red", expand=False))
                         
-                        if os.path.isdir(new_cwd):
-                            session_cwd = new_cwd
-                            console.print(f"[green]✓ 切换目录到: {session_cwd}[/green]")
-                            execution_history.append({
-                                "description": description,
-                                "command": command,
-                                "output": f"Changed directory to {session_cwd}",
-                                "success": True
-                            })
-                            continue
-                        else:
-                            console.print(f"[red]目录不存在: {new_cwd}[/red]")
-                            execution_history.append({
-                                "description": description,
-                                "command": command,
-                                "output": f"Directory not found: {new_cwd}",
-                                "success": False
-                            })
+                        # 错误分析
+                        error_analysis = error_manager.analyze_error(
+                            current_command,
+                            error_msg,
+                            result["return_code"]
+                        )
+                        
+                        console.print(f"[yellow]错误类型: {error_analysis.error_type.value}[/yellow]")
+                        console.print(f"[yellow]分析: {error_analysis.explanation}[/yellow]")
+                        
+                        # 判断是否重试
+                        should_retry, retry_command = error_manager.should_retry(current_command, error_analysis)
+                        
+                        if not should_retry:
+                            console.print("[red]无法恢复，跳过此步骤[/red]")
                             break
+                        
+                        if retry_command:
+                            # 有具体的重试命令（如添加 sudo）
+                            console.print(f"[cyan]重试命令: {retry_command}[/cyan]")
+                            current_command = retry_command
+                            retry_count += 1
+                        else:
+                            # 需要 LLM 生成修复方案
+                            console.print("[cyan]请求 AI 生成修复方案...[/cyan]")
+                            try:
+                                recovery_prompt = error_manager.get_recovery_prompt(error_analysis)
+                                fix_plan = self.llm.generate_next_steps(
+                                    user_goal=recovery_prompt,
+                                    context_str=context_str + "\n\n" + exec_context.get_context_summary(),
+                                    execution_history=[],
+                                    max_steps=1,
+                                    user_context=user_context
+                                )
+                                
+                                if fix_plan.get("steps"):
+                                    current_command = fix_plan["steps"][0]["command"]
+                                    console.print(f"[cyan]AI 建议: {current_command}[/cyan]")
+                                    retry_count += 1
+                                else:
+                                    console.print("[red]AI 无法生成修复方案[/red]")
+                                    break
+                            except Exception as e:
+                                console.print(f"[red]生成修复方案失败: {e}[/red]")
+                                break
                 
-                # 执行普通命令
-                result = CommandExecutor.execute(
-                    command,
-                    cwd=session_cwd,
-                    description=description,
-                    ssh_config=self.ssh_config
-                )
-                
-                if not result["executed"]:
-                    console.print("[yellow]用户取消执行[/yellow]")
-                    return
-                
-                # 记录到历史
-                step_record = {
-                    "description": description,
-                    "command": command,
-                    "output": result["stdout"] if result["return_code"] == 0 else result["stderr"],
-                    "success": result["return_code"] == 0
-                }
-                execution_history.append(step_record)
-                
-                # 显示结果
-                if result["return_code"] == 0:
-                    console.print(f"[green]✓ 成功[/green]")
-                    if result["stdout"].strip():
-                        # 限制输出长度
-                        output_preview = result["stdout"][:500]
-                        if len(result["stdout"]) > 500:
-                            output_preview += "\n... (输出已截断)"
-                        console.print(Panel(output_preview, title="输出", border_style="green", expand=False))
-                else:
-                    console.print(f"[red]✗ 失败[/red]")
-                    error_msg = result["stderr"] or result["stdout"]
-                    console.print(Panel(error_msg, title="错误", border_style="red", expand=False))
-                    # 失败后继续，让 AI 根据错误调整
+                if not step_success:
+                    phase_success = False
+                    console.print("[yellow]步骤失败，继续下一阶段[/yellow]")
                     break
+            
+            # 完成当前阶段
+            exec_context.complete_current_phase(success=phase_success)
+            
+            # 显示进度
+            planner.display_progress()
         
         # 任务完成
-        if is_complete:
-            console.print("\n[bold green]✓ 任务完成！[/bold green]")
+        console.print("\n" + "="*60)
+        if planner.is_plan_complete():
+            console.print("[bold green]✓ 所有阶段完成！[/bold green]")
         elif iteration >= max_iterations:
-            console.print("\n[yellow]达到最大迭代次数，任务可能未完成[/yellow]")
+            console.print("[yellow]达到最大迭代次数[/yellow]")
         else:
-            console.print("\n[yellow]任务执行中断[/yellow]")
+            console.print("[yellow]任务执行中断[/yellow]")
         
-        # 显示执行摘要
+        # 显示最终摘要
         console.print(f"\n[bold]执行摘要:[/bold]")
-        console.print(f"总迭代次数: {iteration}")
-        console.print(f"总步骤数: {len(execution_history)}")
-        console.print(f"成功步骤: {sum(1 for s in execution_history if s['success'])}")
-        console.print(f"失败步骤: {sum(1 for s in execution_history if not s['success'])}")
+        console.print(f"总阶段数: {len(exec_context.phases)}")
+        console.print(f"完成阶段: {sum(1 for p in exec_context.phases if p.is_complete())}")
+        console.print(f"总步骤数: {exec_context.total_steps}")
+        console.print(f"成功步骤: {exec_context.successful_steps}")
+        console.print(f"失败步骤: {exec_context.failed_steps}")
+        console.print(f"总体进度: {planner.get_progress()*100:.0f}%")
 
     def _print_plan_table(self, steps):
         table = Table(show_header=True, header_style="bold magenta")

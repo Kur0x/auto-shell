@@ -23,6 +23,11 @@ class Config:
     MAX_CONTEXT_FILE_SIZE = int(os.getenv("MAX_CONTEXT_FILE_SIZE", "1048576"))  # 1MB
     MAX_CONTEXT_FILES = int(os.getenv("MAX_CONTEXT_FILES", "5"))
     CONTEXT_FILE_ENCODING = os.getenv("CONTEXT_FILE_ENCODING", "utf-8")
+    
+    # 自适应执行配置
+    ADAPTIVE_MAX_ITERATIONS = int(os.getenv("ADAPTIVE_MAX_ITERATIONS", "50"))
+    ADAPTIVE_MAX_STEPS_PER_ITERATION = int(os.getenv("ADAPTIVE_MAX_STEPS_PER_ITERATION", "3"))
+    ADAPTIVE_MAX_CONSECUTIVE_FAILURES = int(os.getenv("ADAPTIVE_MAX_CONSECUTIVE_FAILURES", "5"))
 
     @staticmethod
     def is_ollama() -> bool:
