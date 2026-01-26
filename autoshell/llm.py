@@ -132,6 +132,56 @@ Current Execution Environment:
 - If sudo access is available and user is NOT root, use sudo when necessary for system operations
 - Respect the package manager indicated in the environment
 
+🔄 INTERACTIVE COMMANDS:
+
+When you need user input or confirmation, you can use these special commands:
+
+1. User Confirmation (Yes/No):
+{{
+  "description": "Ask user for confirmation",
+  "command": "__USER_CONFIRM__",
+  "prompt": "Question to ask the user",
+  "default": "yes"
+}}
+
+2. User Text Input:
+{{
+  "description": "Get text input from user",
+  "command": "__USER_INPUT__",
+  "prompt": "What to ask the user",
+  "default": "default value",
+  "validation": "^[0-9]+$"
+}}
+
+3. User Choice (Multiple Options):
+{{
+  "description": "Let user choose from options",
+  "command": "__USER_CHOICE__",
+  "prompt": "Question to ask",
+  "options": ["option1", "option2", "option3"],
+  "default": "option1"
+}}
+
+4. User Password Input:
+{{
+  "description": "Get password from user",
+  "command": "__USER_PASSWORD__",
+  "prompt": "Password prompt"
+}}
+
+WHEN TO USE INTERACTIVE COMMANDS:
+- When the user explicitly asks for input (e.g., "ask me", "let me choose", "I'll provide")
+- When configuration values are not specified and need user decision
+- When potentially destructive operations need confirmation
+- When credentials or sensitive information are needed
+- When multiple valid options exist and user preference is required
+
+IMPORTANT: 
+- Use interactive commands ONLY when necessary and explicitly requested
+- The user's response will be available in subsequent steps as ${USER_INPUT_N} where N is the step number
+- You can reference the last user input as ${USER_INPUT_LAST}
+- Interactive commands do NOT execute shell commands - they only collect user input
+
 ⚠️ CRITICAL JSON FORMAT REQUIREMENTS ⚠️
 
 YOU MUST RESPOND WITH **ONLY** A VALID JSON OBJECT IN THIS **EXACT** FORMAT:
@@ -195,6 +245,62 @@ Example 3 - Package installation on CentOS 8 (root user):
       {{
          "description": "Install nginx",
          "command": "dnf install -y nginx"
+      }}
+   ]
+}}
+
+Example 4 - Interactive: User provides username:
+{{
+   "thought": "User wants to create a new user but will provide the username",
+   "steps": [
+      {{
+         "description": "Get username from user",
+         "command": "__USER_INPUT__",
+         "prompt": "请输入新用户的用户名",
+         "validation": "^[a-z][a-z0-9_-]*$"
+      }},
+      {{
+         "description": "Create user with provided username",
+         "command": "sudo useradd ${USER_INPUT_1}"
+      }},
+      {{
+         "description": "Set password for new user",
+         "command": "sudo passwd ${USER_INPUT_1}"
+      }}
+   ]
+}}
+
+Example 5 - Interactive: Confirm destructive operation:
+{{
+   "thought": "Deleting files is destructive, need user confirmation",
+   "steps": [
+      {{
+         "description": "Confirm deletion of log files",
+         "command": "__USER_CONFIRM__",
+         "prompt": "即将删除 /var/log/*.log 文件，是否继续？",
+         "default": "no"
+      }},
+      {{
+         "description": "Delete log files",
+         "command": "sudo rm -f /var/log/*.log"
+      }}
+   ]
+}}
+
+Example 6 - Interactive: Let user choose version:
+{{
+   "thought": "Multiple nginx versions available, let user choose",
+   "steps": [
+      {{
+         "description": "Let user select nginx version",
+         "command": "__USER_CHOICE__",
+         "prompt": "请选择要安装的 nginx 版本",
+         "options": ["stable", "mainline", "legacy"],
+         "default": "stable"
+      }},
+      {{
+         "description": "Install selected nginx version",
+         "command": "sudo apt install -y nginx-${USER_INPUT_1}"
       }}
    ]
 }}

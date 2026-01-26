@@ -11,6 +11,7 @@ from .context import ContextManager
 from .ssh_context import SSHContextManager
 from .llm import LLMClient
 from .executor import CommandExecutor
+from .interactive import InteractiveHandler, UserInputContext
 
 console = Console()
 
@@ -31,6 +32,9 @@ class AutoShellAgent:
         self._system_info_cache = None
         self._cache_timestamp = None
         self._cache_ttl = Config.SYSTEM_INFO_CACHE_TTL
+        
+        # 用户输入上下文
+        self.user_input_context = UserInputContext()
         
         # 初始化时收集系统信息
         if Config.COLLECT_DETAILED_INFO:
@@ -143,6 +147,31 @@ class AutoShellAgent:
             command = step.get("command", "")
             
             console.print(f"\n[bold cyan]Step {i+1}/{len(steps)}:[/bold cyan] {description}")
+            
+            # 检查是否为交互式命令
+            if InteractiveHandler.is_interactive_command(command):
+                # 处理交互式步骤
+                user_input = InteractiveHandler.handle_interactive_step(step)
+                
+                if user_input is None:
+                    # 用户取消操作
+                    console.print("[yellow]用户取消执行[/yellow]")
+                    return
+                
+                # 存储用户输入
+                is_password = command == "__USER_PASSWORD__"
+                self.user_input_context.store(i + 1, user_input, is_password=is_password)
+                
+                # 如果是确认类型且用户拒绝，则停止执行
+                if command == "__USER_CONFIRM__" and not user_input:
+                    console.print("[yellow]用户拒绝继续，停止执行[/yellow]")
+                    return
+                
+                continue  # 继续下一步
+            
+            # 替换命令中的用户输入占位符
+            command = self.user_input_context.replace_placeholders(command)
+            
             console.print(f"[dim]Command: {command}[/dim]")
             console.print(f"[dim]CWD: {session_cwd}[/dim]")
 

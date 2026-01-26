@@ -6,7 +6,8 @@ AutoShell 是一个智能命令行助手，使用 AI 将自然语言转换为 Sh
 
 ✅ **自然语言转命令** - 用自然语言描述任务，AI 自动生成并执行命令
 ✅ **智能环境识别** - 自动识别OS发行版和包管理器，生成精准命令
-✅ **上下文文件支持** - 提供文本文件作为上下文，让AI更好地理解需求（新功能！）
+✅ **交互式执行** - 支持用户确认、输入、选择等交互操作（新功能！）⭐
+✅ **上下文文件支持** - 提供文本文件作为上下文，让AI更好地理解需求
 ✅ **自适应执行** - 根据执行结果动态调整策略
 ✅ **SSH 远程执行** - 支持在远程服务器上执行命令，自动识别远程环境
 ✅ **安全机制** - 命令白名单和用户确认
@@ -91,7 +92,37 @@ python main.py --ssh-host user@server -f deploy.md -c "部署应用"
 
 详细文档：[CONTEXT_FILE_USAGE.md](CONTEXT_FILE_USAGE.md)
 
-#### 4. SSH 远程模式
+#### 4. 交互式执行模式（新功能！）⭐
+
+交互式执行模式允许 AI 在执行过程中与用户交互，获取确认、输入或选择。
+
+```bash
+# 让用户输入信息
+python main.py -c "创建新用户，用户名让我输入"
+
+# 让用户选择选项
+python main.py -c "安装 nginx，让我选择版本"
+
+# 危险操作自动请求确认
+python main.py -c "删除 /tmp 目录下所有 .log 文件"
+# AI 会自动插入确认步骤
+
+# 结合 SSH 模式
+python main.py --ssh-host user@server -c "创建用户，用户名让我输入"
+
+# 结合自适应模式
+python main.py --adaptive -c "部署应用，配置文件路径让我指定"
+```
+
+**交互类型**：
+- 🔘 **确认操作** - 是/否选择
+- 📝 **文本输入** - 自由文本输入（支持正则验证）
+- 🔢 **多选项选择** - 从列表中选择
+- 🔒 **密码输入** - 隐藏显示的敏感信息
+
+详细文档：[docs/INTERACTIVE_MODE.md](docs/INTERACTIVE_MODE.md)
+
+#### 5. SSH 远程模式
 
 ```bash
 # SSH 交互模式
@@ -109,7 +140,7 @@ python main.py --ssh-host user@example.com --ssh-key ~/.ssh/id_rsa -c "重启服
 
 详细文档：[SSH_USAGE.md](SSH_USAGE.md)
 
-#### 5. 调试模式
+#### 6. 调试模式
 
 默认情况下，AutoShell 不显示调试信息。如需查看详细的执行日志，可以使用 `--debug` 参数：
 
@@ -322,7 +353,8 @@ python main.py --adaptive -c "你的任务" 2>&1 | tee debug.log
 
 ## 文档
 
-- [上下文文件使用指南](CONTEXT_FILE_USAGE.md) - 上下文文件功能详解 ⭐ 新增
+- [交互式执行模式](docs/INTERACTIVE_MODE.md) - 交互式执行功能详解 ⭐ 最新
+- [上下文文件使用指南](CONTEXT_FILE_USAGE.md) - 上下文文件功能详解
 - [智能环境识别](OS_INFO_FEATURE.md) - OS信息增强功能
 - [自适应执行模式](ADAPTIVE_MODE.md) - 详细使用指南
 - [SSH 使用指南](SSH_USAGE.md) - SSH 配置和使用
@@ -361,7 +393,19 @@ MIT License
 
 ## 更新日志
 
-### v1.3.0 (2026-01-26) ⭐ 最新
+### v1.4.0 (2026-01-26) ⭐ 最新
+
+- ✨ **交互式执行模式** - 支持用户确认、输入、选择等交互操作
+- ✨ 四种交互类型：确认、文本输入、多选项、密码
+- ✨ 输入验证（正则表达式）
+- ✨ 占位符引用用户输入（${USER_INPUT_N}）
+- ✨ SSH 和自适应模式完全支持交互
+- 🚀 智能判断何时需要用户交互
+- 📝 新增交互式模式文档
+
+详细文档：[docs/INTERACTIVE_MODE.md](docs/INTERACTIVE_MODE.md)
+
+### v1.3.0 (2026-01-26)
 
 - ✨ **增强自适应模式** - 多阶段任务规划和智能错误恢复
 - ✨ 任务自动分解为多个逻辑阶段
