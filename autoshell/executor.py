@@ -6,7 +6,7 @@ import sys
 import select
 from typing import Optional, Dict, Any
 from rich.console import Console
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.panel import Panel
 from rich.syntax import Syntax
 
@@ -29,6 +29,49 @@ class CommandExecutor:
         "systemctl", "service", "journalctl", "dmesg", "lsof", "which", "whereis",
         "sudo", "xargs", "awk", "sed", "sleep"
     }
+
+    @classmethod
+    def _confirm_with_feedback(cls, command: str, target: str = "local") -> Dict[str, Any]:
+        """
+        带反馈的命令确认
+        
+        支持三种输入：
+        - y/yes/直接回车 -> 执行命令
+        - n/no -> 取消执行
+        - 其他文本 -> 作为反馈，请求重新生成命令
+        
+        :param command: 要确认的命令
+        :param target: 执行目标（用于显示）
+        :return: {"execute": bool, "regenerate": bool, "feedback": str}
+        """
+        syntax = Syntax(command, "bash", theme="monokai", line_numbers=False, word_wrap=True)
+        console.print(Panel(syntax, title="[bold red]Review Safe-Check[/bold red]", expand=True, border_style="red"))
+        
+        console.print(f"[dim]目标: {target}[/dim]")
+        console.print("[dim]输入 y 执行 | n 取消 | 或输入反馈信息让AI重新生成命令[/dim]")
+        
+        try:
+            response = Prompt.ask(
+                f"[bold yellow]Execute on {target}? [y/n/反馈][/bold yellow]",
+                default="y"
+            )
+            
+            response_lower = response.strip().lower()
+            
+            # 检查是否是确认执行
+            if response_lower in ["y", "yes", ""]:
+                return {"execute": True, "regenerate": False, "feedback": ""}
+            
+            # 检查是否是取消
+            if response_lower in ["n", "no"]:
+                return {"execute": False, "regenerate": False, "feedback": ""}
+            
+            # 其他输入视为反馈信息
+            return {"execute": False, "regenerate": True, "feedback": response.strip()}
+            
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]用户取消操作[/yellow]")
+            return {"execute": False, "regenerate": False, "feedback": ""}
 
     @classmethod
     def is_safe(cls, command: str) -> bool:
@@ -88,10 +131,21 @@ class CommandExecutor:
             if description:
                 console.print(f"[bold blue]Step:[/bold blue] {description}")
             
-            syntax = Syntax(command, "bash", theme="monokai", line_numbers=False, word_wrap=True)
-            console.print(Panel(syntax, title="[bold red]Review Safe-Check[/bold red]", expand=True, border_style="red"))
+            # 使用带反馈的确认方式
+            confirm_result = cls._confirm_with_feedback(command, target="local")
             
-            if not Confirm.ask("[bold red]Command not in whitelist. Execute?[/bold red]", default=True):
+            if confirm_result["regenerate"]:
+                # 用户想要重新生成命令
+                return {
+                    "return_code": -1,
+                    "stdout": "",
+                    "stderr": "",
+                    "executed": False,
+                    "regenerate": True,
+                    "feedback": confirm_result["feedback"]
+                }
+            
+            if not confirm_result["execute"]:
                 return {"return_code": -1, "stdout": "", "stderr": "User aborted execution.", "executed": False}
 
         try:
@@ -252,10 +306,21 @@ class CommandExecutor:
             if description:
                 console.print(f"[bold blue]Step:[/bold blue] {description}")
             
-            syntax = Syntax(command, "bash", theme="monokai", line_numbers=False, word_wrap=True)
-            console.print(Panel(syntax, title="[bold red]Review Safe-Check (SSH)[/bold red]", expand=True, border_style="red"))
+            # 使用带反馈的确认方式
+            confirm_result = cls._confirm_with_feedback(command, target=hostname)
             
-            if not Confirm.ask(f"[bold red]Execute on {hostname}?[/bold red]", default=True):
+            if confirm_result["regenerate"]:
+                # 用户想要重新生成命令
+                return {
+                    "return_code": -1,
+                    "stdout": "",
+                    "stderr": "",
+                    "executed": False,
+                    "regenerate": True,
+                    "feedback": confirm_result["feedback"]
+                }
+            
+            if not confirm_result["execute"]:
                 return {"return_code": -1, "stdout": "", "stderr": "User aborted execution.", "executed": False}
         
         try:

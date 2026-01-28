@@ -229,8 +229,44 @@ class AutoShellAgent:
                 # 执行普通命令
                 # 实现针对单个步骤的重试循环
                 step_success = False
+                max_regenerate_attempts = 5  # 最大重新生成次数
+                regenerate_count = 0
+                
                 for attempt in range(self.max_retries + 1):
                     result = CommandExecutor.execute(command, cwd=session_cwd, description=description, ssh_config=self.ssh_config)
+                    
+                    # 检查是否需要重新生成命令
+                    if result.get("regenerate") and regenerate_count < max_regenerate_attempts:
+                        feedback = result.get("feedback", "")
+                        console.print(f"[cyan]根据反馈重新生成命令...[/cyan]")
+                        console.print(f"[dim]用户反馈: {feedback}[/dim]")
+                        
+                        try:
+                            with console.status("[bold green]重新生成命令...[/bold green]", spinner="dots"):
+                                new_step = self.llm.regenerate_command(
+                                    original_command=command,
+                                    original_description=description,
+                                    user_feedback=feedback,
+                                    context_str=context_str,
+                                    user_goal=user_query,
+                                    user_context=user_context
+                                )
+                            
+                            # 更新命令和描述
+                            command = new_step.get("command", command)
+                            description = new_step.get("description", description)
+                            regenerate_count += 1
+                            
+                            console.print(f"[green]✓ 已重新生成命令:[/green]")
+                            console.print(f"[dim]描述: {description}[/dim]")
+                            console.print(f"[dim]命令: {command}[/dim]")
+                            
+                            # 重新尝试执行新命令（不增加attempt计数）
+                            continue
+                            
+                        except Exception as e:
+                            console.print(f"[red]重新生成命令失败: {e}[/red]")
+                            return
                     
                     if not result["executed"]:
                         console.print("[yellow]Execution aborted by user.[/yellow]")
@@ -416,19 +452,55 @@ class AutoShellAgent:
                 console.print(f"\n[bold cyan]步骤 {i+1}/{len(steps)}:[/bold cyan] {description}")
                 console.print(f"[dim]命令: {command}[/dim]")
                 
-                # 执行命令（带重试）
+                # 执行命令（带重试和重新生成）
                 retry_count = 0
                 step_success = False
                 current_command = command
+                current_description = description
+                max_regenerate_attempts = 5
+                regenerate_count = 0
                 
                 while retry_count <= Config.MAX_RETRIES:
                     # 执行命令
                     result = CommandExecutor.execute(
                         current_command,
                         cwd=session_cwd,
-                        description=description,
+                        description=current_description,
                         ssh_config=self.ssh_config
                     )
+                    
+                    # 检查是否需要重新生成命令
+                    if result.get("regenerate") and regenerate_count < max_regenerate_attempts:
+                        feedback = result.get("feedback", "")
+                        console.print(f"[cyan]根据反馈重新生成命令...[/cyan]")
+                        console.print(f"[dim]用户反馈: {feedback}[/dim]")
+                        
+                        try:
+                            with console.status("[bold green]重新生成命令...[/bold green]", spinner="dots"):
+                                new_step = self.llm.regenerate_command(
+                                    original_command=current_command,
+                                    original_description=current_description,
+                                    user_feedback=feedback,
+                                    context_str=context_str,
+                                    user_goal=user_query,
+                                    user_context=user_context
+                                )
+                            
+                            # 更新命令和描述
+                            current_command = new_step.get("command", current_command)
+                            current_description = new_step.get("description", current_description)
+                            regenerate_count += 1
+                            
+                            console.print(f"[green]✓ 已重新生成命令:[/green]")
+                            console.print(f"[dim]描述: {current_description}[/dim]")
+                            console.print(f"[dim]命令: {current_command}[/dim]")
+                            
+                            # 重新尝试执行新命令
+                            continue
+                            
+                        except Exception as e:
+                            console.print(f"[red]重新生成命令失败: {e}[/red]")
+                            return
                     
                     if not result["executed"]:
                         console.print("[yellow]用户取消执行[/yellow]")

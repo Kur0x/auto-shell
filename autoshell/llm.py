@@ -667,3 +667,148 @@ Do NOT include any other text, explanations, or markdown. ONLY the JSON object."
                 summary_parts.append(f"{i}. {status} {desc} (Command: {cmd})")
         
         return "\n".join(summary_parts)
+    
+    def regenerate_command(
+        self,
+        original_command: str,
+        original_description: str,
+        user_feedback: str,
+        context_str: str,
+        user_goal: str = "",
+        user_context: str = ""
+    ) -> dict:
+        """
+        根据用户反馈重新生成单个命令
+        
+        :param original_command: 原始生成的命令
+        :param original_description: 原始步骤描述
+        :param user_feedback: 用户提供的反馈信息
+        :param context_str: 系统环境信息
+        :param user_goal: 用户的总体目标
+        :param user_context: 用户提供的上下文文件内容
+        :return: {"description": ..., "command": ...}
+        """
+        
+        if Config.DEBUG:
+            console.print(f"[dim][DEBUG] Regenerating command based on user feedback...[/dim]")
+        start_time = time.time()
+        
+        system_prompt = f"""
+You are an expert system engineer. The user has reviewed a generated command and provided feedback.
+Your task is to regenerate a better command based on their feedback.
+
+Current Execution Environment:
+{context_str}
+
+{user_context}
+
+⚠️ IMPORTANT RULES:
+- Pay attention to the system information above (OS, package manager, etc.)
+- If the user is root, DO NOT use sudo
+- Consider the user's feedback carefully and adjust the command accordingly
+- Keep the command safe and efficient
+
+⚠️ CRITICAL JSON FORMAT REQUIREMENTS ⚠️
+
+YOU MUST RESPOND WITH **ONLY** A VALID JSON OBJECT IN THIS **EXACT** FORMAT:
+
+{{
+   "description": "Updated step description",
+   "command": "updated shell command"
+}}
+
+🚫 FORBIDDEN:
+- NO text before or after the JSON
+- NO markdown code blocks
+- NO explanations outside the JSON
+"""
+
+        user_message = f"""
+Original Goal: {user_goal if user_goal else "Execute the task"}
+
+Original Command:
+- Description: {original_description}
+- Command: {original_command}
+
+User Feedback: {user_feedback}
+
+Based on the user's feedback, please regenerate a more appropriate command.
+
+IMPORTANT: You MUST respond with ONLY a JSON object:
+{{
+   "description": "step description",
+   "command": "shell command"
+}}
+"""
+
+        raw_content = None
+        
+        try:
+            api_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                "temperature": 0.3  # 低温度以获得更确定的输出
+            }
+            
+            response = None
+            
+            if self.is_ollama:
+                response = self.client.chat.completions.create(**api_params)
+            else:
+                json_mode_failed = False
+                
+                try:
+                    api_params["response_format"] = {"type": "json_object"}
+                    response = self.client.chat.completions.create(**api_params)
+                except Exception as e:
+                    error_msg = str(e)
+                    if "response_format" in error_msg or "400" in error_msg:
+                        json_mode_failed = True
+                    else:
+                        raise
+                
+                if json_mode_failed:
+                    api_params.pop("response_format", None)
+                    response = self.client.chat.completions.create(**api_params)
+            
+            elapsed = time.time() - start_time
+            if Config.DEBUG:
+                console.print(f"[dim][DEBUG] Command regenerated in {elapsed:.2f}s[/dim]")
+            
+            if response is None:
+                raise RuntimeError("API call succeeded but response is None")
+            
+            raw_content = response.choices[0].message.content
+            
+            if not raw_content:
+                raise ValueError("LLM returned empty response")
+            
+            cleaned_content = self._clean_json_response(raw_content)
+            result = json.loads(cleaned_content)
+            
+            # 验证格式
+            if not isinstance(result, dict):
+                raise ValueError(f"Expected dict, got {type(result)}")
+            
+            if "command" not in result:
+                raise ValueError(f"Missing 'command' field. Got keys: {list(result.keys())}")
+            
+            # 确保 description 存在
+            if "description" not in result:
+                result["description"] = original_description
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            if Config.DEBUG:
+                console.print(f"[bold red][DEBUG] JSON Parse Error: {str(e)}[/bold red]")
+                console.print(f"[dim][DEBUG] Raw content: {raw_content or 'N/A'}[/dim]")
+            raise ValueError(f"LLM returned invalid JSON: {str(e)}")
+        except Exception as e:
+            elapsed = time.time() - start_time
+            if Config.DEBUG:
+                console.print(f"[bold red][DEBUG] LLM API Error after {elapsed:.2f}s: {type(e).__name__}: {str(e)}[/bold red]")
+            raise RuntimeError(f"LLM API Error: {str(e)}")
